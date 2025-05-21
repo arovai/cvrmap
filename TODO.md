@@ -1,0 +1,1 @@
+- add subject-specific --roi option (using regexes?)

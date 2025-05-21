@@ -7,17 +7,17 @@ def read_requirements():
 
 setup(
     name='cvrmap',
-    version='3.0.0',
-    url='https://github.com/ln2t/cvrmap',
+    version='4.0.0',
+    url='https://github.com/ln2t/CVRmap',
     author='Antonin Rovai',
     author_email='antonin.rovai@hubruxelles.be',
-    description='CVRmap is an opensource software to compute maps of Cerebro-Vascular Reactivity',
+    description='Tools to compute maps of Cerebro-Vascular Reactivity',
     packages=find_packages(),
     install_requires=read_requirements(),
     entry_points={
         'console_scripts': [
-            'cvrmap = cvrmap.cvrmap:main',
+            'cvrmap = cvrmap.cli.cli:main',
         ]},
     include_package_data=True,
-    package_data={'cvrmap': ['data/*']}
+    package_data={}
 )
