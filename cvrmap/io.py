@@ -5,6 +5,8 @@ import yaml
 import numpy as np
 import json
 
+from . import __version__
+
 def convert_numpy_types(obj):
 	"""
 	Recursively convert numpy types to native Python types for JSON serialization.
@@ -283,7 +285,7 @@ class OutputGenerator:
 				"GeneratedBy": [
 					{
 						"Name": "cvrmap",
-						"Version": "4.0.3",
+						"Version": __version__,
 						"Description": "Cerebrovascular reactivity mapping pipeline"
 					}
 				],
@@ -316,7 +318,7 @@ class OutputGenerator:
 		
 		# Determine probe type and adjust naming accordingly
 		probe_type = getattr(etco2_container, 'probe_type', 'etco2')
-		is_roi_probe = probe_type == 'roi_probe'
+		is_roi_probe = 'roi_probe' in probe_type  # Handle both 'roi_probe' and 'roi_probe_normalized'
 		
 		# Create BIDS paths
 		data_dir = "physio" if not is_roi_probe else "func"  # ROI probes go in func directory
@@ -491,7 +493,7 @@ class OutputGenerator:
 		# Add baseline line if available
 		if hasattr(roi_probe_container, 'baseline') and roi_probe_container.baseline is not None:
 			ax.axhline(y=roi_probe_container.baseline, color='red', linestyle='--', linewidth=2, 
-			          label=f'Baseline ({roi_probe_container.baseline:.3f})')
+			          label=f'Baseline ({roi_probe_container.baseline:.3f} BOLD units)')
 		
 		# Set labels and title
 		ax.set_xlabel('Time (s)')
@@ -788,16 +790,16 @@ class OutputGenerator:
 		
 		return tsv_path, json_path
 	
-	def create_global_signal_figure(self, normalized_global_signal, shifted_etco2_container, global_delay, participant, task, space, unshifted_etco2_container=None):
+	def create_global_signal_figure(self, normalized_global_signal, shifted_probe_container, global_delay, participant, task, space, unshifted_probe_container=None):
 		"""
-		Create a figure showing normalized global signal with time-shifted ETCO2 at global delay.
+		Create a figure showing normalized global signal with time-shifted probe signal at global delay.
 		
 		Parameters:
 		-----------
 		normalized_global_signal : ProbeContainer
 			Normalized global BOLD signal container.
-		shifted_etco2_container : ProbeContainer
-			Time-shifted and normalized ETCO2 container at global delay.
+		shifted_probe_container : ProbeContainer
+			Time-shifted and normalized probe container at global delay.
 		global_delay : float
 			Global delay in seconds.
 		participant : str
@@ -806,11 +808,17 @@ class OutputGenerator:
 			Task name.
 		space : str
 			Space name.
-		unshifted_etco2_container : ProbeContainer, optional
-			Normalized but unshifted ETCO2 container (delay=0).
+		unshifted_probe_container : ProbeContainer, optional
+			Normalized but unshifted probe container (delay=0).
 		"""
 		import matplotlib.pyplot as plt
 		import numpy as np
+		
+		# Determine probe type for appropriate labeling
+		probe_type = getattr(shifted_probe_container, 'probe_type', 'etco2')
+		is_roi_probe = 'roi_probe' in probe_type  # Handle both 'roi_probe' and 'roi_probe_normalized'
+		probe_label = 'ROI Probe' if is_roi_probe else 'ETCO2'
+		probe_units = 'BOLD units' if is_roi_probe else 'mmHg'
 		
 		# Create BIDS directory structure
 		participant_dir = f"sub-{participant}"
@@ -824,19 +832,19 @@ class OutputGenerator:
 		
 		# Create time vectors
 		global_time = np.arange(len(normalized_global_signal.data)) / normalized_global_signal.sampling_frequency
-		etco2_time = np.arange(len(shifted_etco2_container.data)) / shifted_etco2_container.sampling_frequency
+		probe_time = np.arange(len(shifted_probe_container.data)) / shifted_probe_container.sampling_frequency
 		
 		# Create figure
 		fig, ax = plt.subplots(figsize=(12, 6))
 		
 		ax.plot(global_time, normalized_global_signal.data, label='Normalized Global BOLD', color='red', linewidth=2)
-		ax.plot(etco2_time, shifted_etco2_container.data, label=f'Normalized ETCO2 (shift: {global_delay:.1f}s)', color='blue', linewidth=2)
+		ax.plot(probe_time, shifted_probe_container.data, label=f'Normalized {probe_label} (shift: {global_delay:.1f}s)', color='blue', linewidth=2)
 		
-		# Add unshifted ETCO2 if provided
-		if unshifted_etco2_container is not None:
-			unshifted_time = np.arange(len(unshifted_etco2_container.data)) / unshifted_etco2_container.sampling_frequency
-			ax.plot(unshifted_time, unshifted_etco2_container.data, 
-			       label='Normalized ETCO2 (unshifted)', color='blue', linestyle='--', linewidth=2, alpha=0.2)
+		# Add unshifted probe signal if provided
+		if unshifted_probe_container is not None:
+			unshifted_time = np.arange(len(unshifted_probe_container.data)) / unshifted_probe_container.sampling_frequency
+			ax.plot(unshifted_time, unshifted_probe_container.data, 
+			       label=f'Normalized {probe_label} (unshifted)', color='blue', linestyle='--', linewidth=2, alpha=0.2)
 		
 		ax.set_xlabel('Time (s)')
 		ax.set_ylabel('Normalized Signal (z-score)')
@@ -845,8 +853,8 @@ class OutputGenerator:
 		ax.grid(True, alpha=0.3)
 		
 		# Add correlation text
-		if len(normalized_global_signal.data) == len(shifted_etco2_container.data):
-			correlation = np.corrcoef(normalized_global_signal.data, shifted_etco2_container.data)[0, 1]
+		if len(normalized_global_signal.data) == len(shifted_probe_container.data):
+			correlation = np.corrcoef(normalized_global_signal.data, shifted_probe_container.data)[0, 1]
 			ax.text(0.02, 0.98, f'Correlation: {correlation:.3f}', transform=ax.transAxes, 
 					bbox=dict(boxstyle='round', facecolor='white', alpha=0.8), verticalalignment='top')
 		
@@ -859,7 +867,7 @@ class OutputGenerator:
 		
 		return fig_path
 
-	def save_delay_maps(self, delay_results, normalized_bold_container, participant, task, space, global_delay=None):
+	def save_delay_maps(self, delay_results, normalized_bold_container, participant, task, space, global_delay=None, probe_container=None):
 		"""
 		Save delay and correlation maps to NIfTI files with BIDS naming and JSON sidecars.
 		
@@ -877,6 +885,8 @@ class OutputGenerator:
 			Space name (e.g., 'MNI152NLin2009cAsym').
 		global_delay : float, optional
 			Global delay value in seconds used as reference for delay computation
+		probe_container : ProbeContainer, optional
+			Container with probe information for metadata
 			
 		Returns:
 		--------
@@ -886,6 +896,11 @@ class OutputGenerator:
 		import json
 		import numpy as np
 		import nibabel as nib
+		
+		# Determine probe type for appropriate descriptions
+		probe_type = getattr(probe_container, 'probe_type', 'etco2') if probe_container else 'etco2'
+		is_roi_probe = 'roi_probe' in probe_type  # Handle both 'roi_probe' and 'roi_probe_normalized'
+		probe_description = 'ROI probe' if is_roi_probe else 'ETCO2 probe'
 		
 		# Extract results
 		delay_maps = delay_results['delay_maps']
@@ -912,8 +927,8 @@ class OutputGenerator:
 		nib.save(correlation_img, correlation_nii_path)
 		
 		# Create JSON sidecars using helper function
-		delay_description = f"Voxel-wise optimal delay map showing temporal delays that maximize correlation between BOLD signal and shifted ETCO2 probe, masked by correlation threshold (≥{correlation_threshold})"
-		processing_description = f"Each voxel contains the delay (in seconds) that produced the maximum absolute correlation with the shifted ETCO2 probe signal. Only voxels with correlation ≥{correlation_threshold} are included; others are set to NaN"
+		delay_description = f"Voxel-wise optimal delay map showing temporal delays that maximize correlation between BOLD signal and shifted {probe_description}, masked by correlation threshold (≥{correlation_threshold})"
+		processing_description = f"Each voxel contains the delay (in seconds) that produced the maximum absolute correlation with the shifted {probe_description} signal. Only voxels with correlation ≥{correlation_threshold} are included; others are set to NaN"
 		
 		if global_delay is not None:
 			delay_description += f", relative to global delay baseline of {global_delay:.3f}s"
@@ -943,7 +958,7 @@ class OutputGenerator:
 			}
 		
 		correlation_sidecar = self._create_standard_sidecar_base(
-			"Voxel-wise maximum correlation map showing the highest correlation between BOLD signal and shifted ETCO2 probe across all tested delays",
+			f"Voxel-wise maximum correlation map showing the highest correlation between BOLD signal and shifted {probe_description} across all tested delays",
 			"correlation coefficient", space, task, "correlation")
 		correlation_sidecar.update({
 			"CorrelationRange": {
@@ -951,7 +966,7 @@ class OutputGenerator:
 				"Maximum": 1.0,
 				"Description": "Theoretical range of correlation coefficients"
 			},
-			"ProcessingDescription": "Each voxel contains the maximum absolute correlation coefficient achieved across all tested delays with the ETCO2 probe signal",
+			"ProcessingDescription": f"Each voxel contains the maximum absolute correlation coefficient achieved across all tested delays with the {probe_description} signal",
 			"NumberOfDelayConditions": len(delay_range),
 			"DelayStep": float(delay_range[1] - delay_range[0]) if len(delay_range) > 1 else 1.0
 		})
@@ -1101,7 +1116,8 @@ class OutputGenerator:
 		nib.save(cvr_img, cvr_nii_path)
 		
 		# Determine probe type and appropriate units/description
-		is_roi_probe = probe_container and getattr(probe_container, 'probe_type', 'etco2') == 'roi_probe'
+		probe_type = getattr(probe_container, 'probe_type', 'etco2') if probe_container else 'etco2'
+		is_roi_probe = 'roi_probe' in probe_type  # Handle both 'roi_probe' and 'roi_probe_normalized'
 		
 		if is_roi_probe:
 			description = "Cerebrovascular reactivity (CVR) map showing voxel-wise CVR values computed using GLM regression between BOLD signal and shifted ROI probe signal"
@@ -1141,7 +1157,7 @@ class OutputGenerator:
 		
 		return cvr_nii_path
 
-	def save_coefficient_maps(self, cvr_results, bold_container, participant, task, space):
+	def save_coefficient_maps(self, cvr_results, bold_container, participant, task, space, probe_container=None):
 		"""
 		Save GLM coefficient maps (b0 and b1) to NIfTI files with BIDS naming and JSON sidecars.
 		
@@ -1157,6 +1173,8 @@ class OutputGenerator:
 			Task name
 		space : str
 			Space name (e.g., 'MNI152NLin2009cAsym')
+		probe_container : ProbeContainer, optional
+			Container with probe information for metadata
 			
 		Returns:
 		--------
@@ -1166,6 +1184,11 @@ class OutputGenerator:
 		import json
 		import numpy as np
 		import nibabel as nib
+		
+		# Determine probe type for appropriate descriptions
+		probe_type = getattr(probe_container, 'probe_type', 'etco2') if probe_container else 'etco2'
+		is_roi_probe = 'roi_probe' in probe_type  # Handle both 'roi_probe' and 'roi_probe_normalized'
+		probe_description = 'ROI probe' if is_roi_probe else 'ETCO2 probe'
 		
 		# Extract coefficient maps
 		b0_maps = cvr_results.get('b0_maps')
@@ -1193,7 +1216,7 @@ class OutputGenerator:
 			"GLM intercept coefficient (b0) map from regression: BOLD = b0 + b1*probe_signal",
 			"arbitrary", space, task, "coefficient")
 		b0_sidecar.update({
-			"ProcessingDescription": "Intercept coefficient from voxel-wise GLM regression between BOLD signal and shifted ETCO2 probe signal",
+			"ProcessingDescription": f"Intercept coefficient from voxel-wise GLM regression between BOLD signal and shifted {probe_description} signal",
 			"GLMFormula": "BOLD ~ intercept + probe_signal",
 			"Method": "GeneralLinearModel",
 			"CoefficientType": "intercept"
@@ -1203,7 +1226,7 @@ class OutputGenerator:
 			"GLM slope coefficient (b1) map from regression: BOLD = b0 + b1*probe_signal",
 			"signal_change_per_probe_unit", space, task, "coefficient")
 		b1_sidecar.update({
-			"ProcessingDescription": "Slope coefficient from voxel-wise GLM regression between BOLD signal and shifted ETCO2 probe signal",
+			"ProcessingDescription": f"Slope coefficient from voxel-wise GLM regression between BOLD signal and shifted {probe_description} signal",
 			"GLMFormula": "BOLD ~ intercept + probe_signal",
 			"Method": "GeneralLinearModel",
 			"CoefficientType": "slope"
@@ -1435,7 +1458,8 @@ class OutputGenerator:
 		fig, gs_inner, ax_cbar, n_rows, n_cols = self._setup_lightbox_figure(title)
 		
 		# Determine probe type for appropriate units and scaling
-		is_roi_probe = probe_container and getattr(probe_container, 'probe_type', 'etco2') == 'roi_probe'
+		probe_type = getattr(probe_container, 'probe_type', 'etco2') if probe_container else 'etco2'
+		is_roi_probe = 'roi_probe' in probe_type  # Handle both 'roi_probe' and 'roi_probe_normalized'
 		
 		# Set colormap and normalization
 		cmap = plt.cm.get_cmap('hot').copy()

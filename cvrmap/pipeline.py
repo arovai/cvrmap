@@ -40,7 +40,15 @@ class Pipeline:
             if roi_probe_enabled:
                 self.logger.info(f"Using ROI-based probe for participant: {participant}")
                 from .roi_probe import create_roi_probe_from_config
-                etco2_container = create_roi_probe_from_config(bold_container, self.config, self.logger)
+                etco2_container = create_roi_probe_from_config(
+                    bold_container, 
+                    self.config, 
+                    self.logger,
+                    participant=participant,
+                    task=self.args.task,
+                    space=self.args.space,
+                    fmriprep_dir=self.fmriprep_dir
+                )
                 self.logger.info(f"ROI probe extraction completed for participant: {participant}")
                 
                 # No physio_preprocessor in ROI mode
@@ -137,6 +145,9 @@ class Pipeline:
                 units="normalized",
                 logger=self.logger
             )
+            # Copy probe_type from original container
+            if hasattr(etco2_container, 'probe_type'):
+                shifted_etco2_container.probe_type = etco2_container.probe_type
             
             # Create a temporary container for the unshifted signal
             unshifted_etco2_container = ProbeContainer(
@@ -147,6 +158,9 @@ class Pipeline:
                 units="normalized",
                 logger=self.logger
             )
+            # Copy probe_type from original container
+            if hasattr(etco2_container, 'probe_type'):
+                unshifted_etco2_container.probe_type = etco2_container.probe_type
             
             # Create global signal correlation figure
             output_generator.create_global_signal_figure(
@@ -206,7 +220,8 @@ class Pipeline:
                 participant=participant,
                 task=self.args.task,
                 space=self.args.space,
-                global_delay=global_delay
+                global_delay=global_delay,
+                probe_container=etco2_container
             )
             self.logger.info("Delay maps and correlation maps saved successfully")
             
@@ -258,7 +273,8 @@ class Pipeline:
                 bold_container=bold_container,
                 participant=participant,
                 task=self.args.task,
-                space=self.args.space
+                space=self.args.space,
+                probe_container=etco2_container
             )
             self.logger.info("Coefficient maps saved successfully")
             

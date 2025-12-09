@@ -9,6 +9,8 @@ import os
 from pathlib import Path
 from datetime import datetime
 
+from . import __version__
+
 
 class CVRReportGenerator:
     """
@@ -108,7 +110,7 @@ class CVRReportGenerator:
         subject_label = self.participant_id
         task = self.task
         spaces = kwargs.get('space', 'MNI152NLin2009cAsym')
-        version = '4.0.3'  # TODO: get from package metadata
+        version = __version__
         global_delay = kwargs.get('global_delay', 0.0)
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
@@ -157,7 +159,77 @@ class CVRReportGenerator:
         # Get histogram statistics
         histogram_stats = kwargs.get('histogram_stats', {})
         
-        html_template = f"""<!DOCTYPE html>
+        # Build delay statistics HTML section
+        delay_stats_html = ""
+        if histogram_stats.get('delay_stats'):
+            ds = histogram_stats['delay_stats']
+            delay_stats_html = f"""
+                        <div style="margin-top: 1rem;">
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                                <div style="text-align: center; padding: 0.75rem; background: #e8f4f8; border-radius: 6px;">
+                                    <div style="font-size: 1.2em; font-weight: bold; color: #17a2b8;">{ds['mean']:.2f}s</div>
+                                    <div style="font-size: 0.85em; color: #666;">Mean Delay</div>
+                                </div>
+                                <div style="text-align: center; padding: 0.75rem; background: #f8f9fa; border-radius: 6px;">
+                                    <div style="font-size: 1.2em; font-weight: bold; color: #6c757d;">{ds['std']:.2f}s</div>
+                                    <div style="font-size: 0.85em; color: #666;">Standard Dev</div>
+                                </div>
+                                <div style="text-align: center; padding: 0.75rem; background: #fff3cd; border-radius: 6px;">
+                                    <div style="font-size: 1.2em; font-weight: bold; color: #856404;">{ds['median']:.2f}s</div>
+                                    <div style="font-size: 0.85em; color: #666;">Median</div>
+                                </div>
+                                <div style="text-align: center; padding: 0.75rem; background: #d4edda; border-radius: 6px;">
+                                    <div style="font-size: 1.2em; font-weight: bold; color: #155724;">{ds['n_voxels']:,}</div>
+                                    <div style="font-size: 0.85em; color: #666;">Brain Voxels</div>
+                                </div>
+                            </div>
+                            <div style="margin-top: 1rem; padding: 0.75rem; background: #f8f9fa; border-radius: 6px; font-size: 0.9em;">
+                                <strong>Range:</strong> [{ds['min']:.2f}, {ds['max']:.2f}] seconds<br>
+                                <strong>IQR:</strong> [{ds['q25']:.2f}, {ds['q75']:.2f}] seconds
+                            </div>
+                        </div>
+                        """
+        else:
+            delay_stats_html = "<p style='color: #666; font-style: italic;'>Delay statistics not available</p>"
+        
+        # Build CVR statistics HTML section
+        cvr_stats_html = ""
+        if histogram_stats.get('cvr_stats'):
+            cs = histogram_stats['cvr_stats']
+            cvr_units = "arbitrary units" if roi_probe_enabled else "%BOLD/mmHg"
+            cvr_stats_html = f"""
+                        <div style="margin-top: 1rem;">
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                                <div style="text-align: center; padding: 0.75rem; background: #d4edda; border-radius: 6px;">
+                                    <div style="font-size: 1.2em; font-weight: bold; color: #155724;">{cs['mean']:.4f}</div>
+                                    <div style="font-size: 0.85em; color: #666;">Mean CVR</div>
+                                </div>
+                                <div style="text-align: center; padding: 0.75rem; background: #f8f9fa; border-radius: 6px;">
+                                    <div style="font-size: 1.2em; font-weight: bold; color: #6c757d;">{cs['std']:.4f}</div>
+                                    <div style="font-size: 0.85em; color: #666;">Standard Dev</div>
+                                </div>
+                                <div style="text-align: center; padding: 0.75rem; background: #fff3cd; border-radius: 6px;">
+                                    <div style="font-size: 1.2em; font-weight: bold; color: #856404;">{cs['median']:.4f}</div>
+                                    <div style="font-size: 0.85em; color: #666;">Median</div>
+                                </div>
+                                <div style="text-align: center; padding: 0.75rem; background: #e8f4f8; border-radius: 6px;">
+                                    <div style="font-size: 1.2em; font-weight: bold; color: #17a2b8;">{cs['n_voxels']:,}</div>
+                                    <div style="font-size: 0.85em; color: #666;">Brain Voxels</div>
+                                </div>
+                            </div>
+                            <div style="margin-top: 1rem; padding: 0.75rem; background: #f8f9fa; border-radius: 6px; font-size: 0.9em;">
+                                <strong>Range:</strong> [{cs['min']:.4f}, {cs['max']:.4f}] {cvr_units}<br>
+                                <strong>IQR:</strong> [{cs['q25']:.4f}, {cs['q75']:.4f}] {cvr_units}
+                            </div>
+                        </div>
+                        """
+        else:
+            cvr_stats_html = "<p style='color: #666; font-style: italic;'>CVR statistics not available</p>"
+        
+        # Build ROI visualization nav link (can't have backslashes in f-string expressions)
+        roi_vis_link = '<a href="#roi-visualization">ROI Visualization</a>' if roi_probe_enabled else ""
+        
+        html_template = f"""<!DOCTYPE html>>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -376,7 +448,7 @@ class CVRReportGenerator:
             <div class="nav-links">
                 <a href="#summary">Summary</a>
                 <a href="#physiological">{"ROI Probe" if roi_probe_enabled else "Physiological"}</a>
-                {"<a href=\"#roi-visualization\">ROI Visualization</a>" if roi_probe_enabled else ""}
+                {roi_vis_link}
                 <a href="#denoising">Denoising</a>
                 <a href="#global-delay">Global Delay</a>
                 <a href="#delay-maps">Delay Maps</a>
@@ -630,90 +702,21 @@ class CVRReportGenerator:
                 <p class="section-subtitle">Quantitative analysis of delay and CVR map distributions</p>
             </div>
             <div class="section-content">
-                {('''''
+                {f'''
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-bottom: 2rem;">
                     <!-- Delay Statistics -->
                     <div class="summary-card">
                         <h4><i class="fas fa-clock"></i> Hemodynamic Delay Statistics</h4>
-                        ''' + ("""
-                        <div style="margin-top: 1rem;">
-                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                                <div style="text-align: center; padding: 0.75rem; background: #e8f4f8; border-radius: 6px;">
-                                    <div style="font-size: 1.2em; font-weight: bold; color: #17a2b8;">{mean:.2f}s</div>
-                                    <div style="font-size: 0.85em; color: #666;">Mean Delay</div>
-                                </div>
-                                <div style="text-align: center; padding: 0.75rem; background: #f8f9fa; border-radius: 6px;">
-                                    <div style="font-size: 1.2em; font-weight: bold; color: #6c757d;">{std:.2f}s</div>
-                                    <div style="font-size: 0.85em; color: #666;">Standard Dev</div>
-                                </div>
-                                <div style="text-align: center; padding: 0.75rem; background: #fff3cd; border-radius: 6px;">
-                                    <div style="font-size: 1.2em; font-weight: bold; color: #856404;">{median:.2f}s</div>
-                                    <div style="font-size: 0.85em; color: #666;">Median</div>
-                                </div>
-                                <div style="text-align: center; padding: 0.75rem; background: #d4edda; border-radius: 6px;">
-                                    <div style="font-size: 1.2em; font-weight: bold; color: #155724;">{n_voxels:,}</div>
-                                    <div style="font-size: 0.85em; color: #666;">Brain Voxels</div>
-                                </div>
-                            </div>
-                            <div style="margin-top: 1rem; padding: 0.75rem; background: #f8f9fa; border-radius: 6px; font-size: 0.9em;">
-                                <strong>Range:</strong> [{min_val:.2f}, {max_val:.2f}] seconds<br>
-                                <strong>IQR:</strong> [{q25:.2f}, {q75:.2f}] seconds
-                            </div>
-                        </div>
-                        """.format(
-                            mean=histogram_stats['delay_stats']['mean'],
-                            std=histogram_stats['delay_stats']['std'],
-                            median=histogram_stats['delay_stats']['median'],
-                            n_voxels=histogram_stats['delay_stats']['n_voxels'],
-                            min_val=histogram_stats['delay_stats']['min'],
-                            max_val=histogram_stats['delay_stats']['max'],
-                            q25=histogram_stats['delay_stats']['q25'],
-                            q75=histogram_stats['delay_stats']['q75']
-                        ) if histogram_stats.get('delay_stats') else "<p style='color: #666; font-style: italic;'>Delay statistics not available</p>") + '''
+                        {delay_stats_html}
                     </div>
                     
                     <!-- CVR Statistics -->
                     <div class="summary-card">
                         <h4><i class="fas fa-brain"></i> CVR Statistics</h4>
-                        ''' + ("""
-                        <div style="margin-top: 1rem;">
-                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                                <div style="text-align: center; padding: 0.75rem; background: #d4edda; border-radius: 6px;">
-                                    <div style="font-size: 1.2em; font-weight: bold; color: #155724;">{mean:.4f}</div>
-                                    <div style="font-size: 0.85em; color: #666;">Mean CVR</div>
-                                </div>
-                                <div style="text-align: center; padding: 0.75rem; background: #f8f9fa; border-radius: 6px;">
-                                    <div style="font-size: 1.2em; font-weight: bold; color: #6c757d;">{std:.4f}</div>
-                                    <div style="font-size: 0.85em; color: #666;">Standard Dev</div>
-                                </div>
-                                <div style="text-align: center; padding: 0.75rem; background: #fff3cd; border-radius: 6px;">
-                                    <div style="font-size: 1.2em; font-weight: bold; color: #856404;">{median:.4f}</div>
-                                    <div style="font-size: 0.85em; color: #666;">Median</div>
-                                </div>
-                                <div style="text-align: center; padding: 0.75rem; background: #e8f4f8; border-radius: 6px;">
-                                    <div style="font-size: 1.2em; font-weight: bold; color: #17a2b8;">{n_voxels:,}</div>
-                                    <div style="font-size: 0.85em; color: #666;">Brain Voxels</div>
-                                </div>
-                            </div>
-                            <div style="margin-top: 1rem; padding: 0.75rem; background: #f8f9fa; border-radius: 6px; font-size: 0.9em;">
-                                <strong>Range:</strong> [{min_val:.4f}, {max_val:.4f}] {units}<br>
-                                <strong>IQR:</strong> [{q25:.4f}, {q75:.4f}] {units}
-                            </div>
-                        </div>
-                        """.format(
-                            mean=histogram_stats['cvr_stats']['mean'],
-                            std=histogram_stats['cvr_stats']['std'],
-                            median=histogram_stats['cvr_stats']['median'],
-                            n_voxels=histogram_stats['cvr_stats']['n_voxels'],
-                            min_val=histogram_stats['cvr_stats']['min'],
-                            max_val=histogram_stats['cvr_stats']['max'],
-                            q25=histogram_stats['cvr_stats']['q25'],
-                            q75=histogram_stats['cvr_stats']['q75'],
-                            units="arbitrary units" if roi_probe_enabled else "%BOLD/mmHg"
-                        ) if histogram_stats.get('cvr_stats') else "<p style='color: #666; font-style: italic;'>CVR statistics not available</p>") + '''
+                        {cvr_stats_html}
                     </div>
                 </div>
-                ''''' + '') if histogram_stats else ''}
+                ''' if histogram_stats else ''}
                 
                 <!-- Histogram Figures -->
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">

@@ -1,4 +1,5 @@
 import argparse
+import os
 from . import __version__
 
 # Set matplotlib backend to non-GUI to avoid tkinter issues in parallel processing
@@ -56,7 +57,7 @@ def main():
     parser.add_argument('--roi-radius', type=float, default=6.0, 
                        help='Radius in millimeters (mm) for spherical ROI (default: 6.0)')
     parser.add_argument('--roi-mask', type=str, 
-                       help='Path to binary mask NIfTI file for ROI extraction')
+                       help='Path to binary mask NIfTI file for ROI extraction, or pattern with wildcards (e.g., "sub-*_task-*_desc-brain_mask" will automatically resolve to the correct file in fMRIPrep derivatives)')
     parser.add_argument('--roi-atlas', type=str, 
                        help='Path to atlas NIfTI file for ROI extraction')
     parser.add_argument('--roi-region-id', type=int, 
@@ -112,7 +113,7 @@ def main():
         logger.info(f"Baseline method set to: {args.baseline_method}")
     
     # Add task-specific recommendations for baseline method
-    if args.task and args.task.lower() == 'restingstate' or args.task.lower() == 'resting-state' or args.task.lower() == 'rest':
+    if args.task and (args.task.lower() == 'restingstate' or args.task.lower() == 'resting-state' or args.task.lower() == 'rest'):
         current_baseline_method = config.get('physio', {}).get('baseline_method', 'peakutils')
         if current_baseline_method == 'peakutils':
             logger.warning("WARNING: Task appears to be resting-state data. Consider using --baseline-method mean instead of peakutils for better baseline estimation in resting-state data without gas challenge.")
