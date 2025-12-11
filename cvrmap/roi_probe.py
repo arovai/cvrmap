@@ -601,10 +601,10 @@ def create_roi_probe_from_config(bold_container, config, logger=None, participan
     
     elif method == 'mask':
         mask_path = roi_config.get('mask_path')
-        
+
         if mask_path is None:
             raise ValueError("ROI mask path not specified in configuration")
-        
+
         # Resolve pattern if necessary
         if participant and task and space and fmriprep_dir:
             try:
@@ -612,11 +612,14 @@ def create_roi_probe_from_config(bold_container, config, logger=None, participan
                     mask_path, fmriprep_dir, participant, task, space, logger
                 )
                 mask_path = resolved_mask_path
+                # Update config with resolved path so other functions can use it
+                roi_config['mask_path'] = resolved_mask_path
+                roi_config['mask_path_resolved'] = resolved_mask_path
             except Exception as e:
                 if logger:
                     logger.warning(f"Failed to resolve ROI mask pattern '{mask_path}': {e}")
                 raise
-        
+
         return extractor.extract_probe_from_mask(mask_path)
     
     elif method == 'atlas':

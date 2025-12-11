@@ -43,12 +43,21 @@ class CVRReportGenerator:
         self.output_dir = output_dir
         self.logger = logger
         self.config = config
-        
+
         # Set up report paths
         self.participant_dir = os.path.join(output_dir, f"sub-{participant_id}")
-        
-        if self.logger:
-            self.logger.debug(f"CVRReportGenerator initialized for participant {participant_id}")
+
+    def _get_roi_label_entity(self):
+        """
+        Get the ROI label entity string for BIDS naming.
+
+        Returns '_label-{label}' if ROI probe is enabled and has a label configured,
+        otherwise returns an empty string.
+        """
+        roi_config = self.config.get('roi_probe', {}) if self.config else {}
+        if roi_config.get('enabled') and roi_config.get('label'):
+            return f"_label-{roi_config['label']}"
+        return ''
     
     def generate_report(self, **kwargs):
         """
@@ -80,8 +89,9 @@ class CVRReportGenerator:
         # Create the main HTML report file
         report_html = self._create_main_report_html(**kwargs)
         
-        # Write the report to file
-        report_filename = f"sub-{self.participant_id}_task-{self.task}_report.html"
+        # Write the report to file with label entity
+        label_entity = self._get_roi_label_entity()
+        report_filename = f"sub-{self.participant_id}_task-{self.task}{label_entity}_report.html"
         report_path = os.path.join(self.participant_dir, report_filename)
         
         with open(report_path, 'w') as f:
@@ -128,15 +138,16 @@ class CVRReportGenerator:
         
         # Get figure paths - check for both physio and ROI probe figures
         figures_dir = os.path.join(self.participant_dir, 'figures')
+        label_entity = self._get_roi_label_entity()
         physio_figure = f"sub-{subject_label}_task-{task}_desc-physio.png"
-        roi_probe_figure = f"sub-{subject_label}_task-{task}_desc-roiprobe.png"
-        roi_visualization_figure = f"sub-{subject_label}_task-{task}_desc-roivisualization.png"
-        global_figure = f"sub-{subject_label}_task-{task}_space-{spaces}_desc-globalcorr.png"
-        delay_figure = f"sub-{subject_label}_task-{task}_space-{spaces}_desc-delaymasked.png"
-        cvr_figure = f"sub-{subject_label}_task-{task}_space-{spaces}_desc-cvr.png"
-        ic_classification_figure = f"sub-{subject_label}_task-{task}_desc-icclassification.png"
-        delay_histogram_figure = f"sub-{subject_label}_task-{task}_desc-delayhist.png"
-        cvr_histogram_figure = f"sub-{subject_label}_task-{task}_desc-cvrhist.png"
+        roi_probe_figure = f"sub-{subject_label}_task-{task}{label_entity}_desc-roiprobe.png"
+        roi_visualization_figure = f"sub-{subject_label}_task-{task}{label_entity}_desc-roivisualization.png"
+        global_figure = f"sub-{subject_label}_task-{task}{label_entity}_space-{spaces}_desc-globalcorr.png"
+        delay_figure = f"sub-{subject_label}_task-{task}{label_entity}_space-{spaces}_desc-delaymasked.png"
+        cvr_figure = f"sub-{subject_label}_task-{task}{label_entity}_space-{spaces}_desc-cvr.png"
+        ic_classification_figure = f"sub-{subject_label}_task-{task}{label_entity}_desc-icclassification.png"
+        delay_histogram_figure = f"sub-{subject_label}_task-{task}{label_entity}_desc-delayhist.png"
+        cvr_histogram_figure = f"sub-{subject_label}_task-{task}{label_entity}_desc-cvrhist.png"
         
         # Check which figures exist
         physio_exists = os.path.exists(os.path.join(figures_dir, physio_figure))
@@ -152,7 +163,24 @@ class CVRReportGenerator:
         # Determine probe mode for appropriate labeling
         roi_probe_enabled = self.config.get('roi_probe', {}).get('enabled', False) if self.config else False
         probe_mode = "ROI" if roi_probe_enabled else "Physiological"
-        
+
+        # Get ROI configuration details for the report
+        roi_config = self.config.get('roi_probe', {}) if self.config else {}
+        roi_method = roi_config.get('method', 'Unknown')
+        roi_label = roi_config.get('label', '')
+        roi_mask_path = roi_config.get('mask_path', '')
+
+        # Build ROI info HTML for mask method
+        roi_mask_info_html = ""
+        if roi_probe_enabled and roi_method == 'mask' and roi_mask_path:
+            roi_mask_info_html = f"""
+                <div class="summary-card" style="margin-bottom: 1.5rem; background: #e8f4f8; border-left: 4px solid #17a2b8;">
+                    <h4 style="margin-bottom: 0.5rem; color: #0c5460;">ROI Mask Information</h4>
+                    <p style="margin-bottom: 0.5rem;"><strong>Label:</strong> {roi_label}</p>
+                    <p style="margin-bottom: 0; word-break: break-all;"><strong>Mask Path:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px; font-size: 0.85em;">{roi_mask_path}</code></p>
+                </div>
+            """
+
         # Get IC classification stats
         ic_stats = kwargs.get('bold_results', {}).get('ic_classification_stats', None)
         
@@ -518,21 +546,23 @@ class CVRReportGenerator:
                 <p class="section-subtitle">{"ROI-based probe signal extraction and processing" if roi_probe_enabled else "Breathing signal processing and CO₂ trace extraction"}</p>
             </div>
             <div class="section-content">
-                {("<div class='figure-container'>" + 
+                {roi_mask_info_html}
+                {("<div class='figure-container'>" +
                 f"<img src='figures/{roi_probe_figure}' alt='ROI Probe Analysis' />" +
                 "<div class='figure-caption'>" +
                 "This graph shows the ROI-based probe signal extracted from the specified brain region. " +
                 "The signal is averaged across all voxels within the ROI and serves as an alternative to physiological recordings " +
                 "for CVR analysis. The baseline represents the mean signal level used for CVR computations." +
-                "</div></div>") if roi_probe_enabled and roi_probe_exists else 
-                ("<div class='figure-container'>" + 
+                "</div></div>") if roi_probe_enabled and roi_probe_exists else
+                ("<div class='figure-container'>" +
                 f"<img src='figures/{physio_figure}' alt='Physiological Data Analysis' />" +
                 "<div class='figure-caption'>" +
                 "This graph shows the original breathing data with the reconstructed upper envelope and corresponding baseline. " +
                 "The end-tidal CO₂ (ETCO₂) trace is extracted from the breathing signal peaks and represents the CO₂ concentration " +
                 "at the end of each expiration, which serves as the regressor for CVR analysis." +
-                "</div></div>" if physio_exists else 
+                "</div></div>" if physio_exists else
                 "<div class='warning'>Physiological data figure not found. Please ensure the analysis completed successfully.</div>")}
+            </div>
         </section>
         
         <!-- ROI Visualization Section (only shown for ROI probe mode) -->

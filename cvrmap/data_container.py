@@ -274,14 +274,35 @@ class ProbeContainer(DataContainer):
         actual_n_samples = self.shifted_signals.shape[1]
         actual_duration = actual_n_samples / self.sampling_frequency
         target_n_samples = int(np.round(actual_duration * target_sampling_frequency))
-        
+
+        if self.logger:
+            self.logger.debug(f"DEBUG PROBE: Resampling {self.shifted_signals.shape[0]} shifted probe signals")
+            self.logger.debug(f"DEBUG PROBE: {self.sampling_frequency:.3f} Hz ({actual_n_samples} samples) → "
+                            f"{target_sampling_frequency:.3f} Hz ({target_n_samples} samples)")
+            self.logger.debug(f"DEBUG PROBE: Duration: {actual_duration:.2f} seconds")
+
         # Resample all shifted signals
         n_delays = self.shifted_signals.shape[0]
         resampled_shifted_signals = np.zeros((n_delays, target_n_samples))
-        
+
+        # DEBUG: Show zero-delay signal before/after resampling
+        if self.logger and n_delays > 0:
+            # Find zero-delay index
+            zero_delay_idx = np.argmin(np.abs(self.time_delays_seconds))
+            before_zero_delay = self.shifted_signals[zero_delay_idx, :].copy()
+            self.logger.debug(f"DEBUG PROBE: Zero-delay signal (delay={self.time_delays_seconds[zero_delay_idx]:.1f}s)")
+            self.logger.debug(f"DEBUG PROBE: Before resampling - first 10 points: {before_zero_delay[:10]}")
+            self.logger.debug(f"DEBUG PROBE: Before - mean: {np.mean(before_zero_delay):.6f}, std: {np.std(before_zero_delay):.6f}")
+
         for i in range(n_delays):
             resampled_shifted_signals[i, :] = resample(self.shifted_signals[i, :], target_n_samples)
-        
+
+        # DEBUG: Show zero-delay signal after resampling
+        if self.logger and n_delays > 0:
+            after_zero_delay = resampled_shifted_signals[zero_delay_idx, :]
+            self.logger.debug(f"DEBUG PROBE: After resampling - first 10 points: {after_zero_delay[:10]}")
+            self.logger.debug(f"DEBUG PROBE: After - mean: {np.mean(after_zero_delay):.6f}, std: {np.std(after_zero_delay):.6f}")
+
         return resampled_shifted_signals, self.time_delays_seconds.copy()
 
     def get_resampled_shifted_signals(self, time_delays_seconds, target_sampling_frequency, target_duration_seconds):
@@ -688,35 +709,40 @@ class BoldContainer(DataContainer):
         
         return global_signal_container
 
-    def save(self, output_dir):
+    def save(self, output_dir, label=None):
         """
         Save the BOLD container data to a NIfTI file.
-        
+
         Parameters:
         -----------
         output_dir : str
             Base output directory for BIDS derivatives.
-            
+        label : str, optional
+            ROI label for BIDS naming (e.g., 'SSS'). If provided, adds '_label-{label}' entity.
+
         Returns:
         --------
         str : Path where the data was saved
         """
         import os
         import nibabel as nib
-        
-        # Build BIDS path: output_dir/sub-{participant}/func/sub-{participant}_task-{task}_space-{space}_desc-denoised_bold.nii.gz
+
+        # Build BIDS path: output_dir/sub-{participant}/func/sub-{participant}_task-{task}_label-{label}_space-{space}_desc-denoised_bold.nii.gz
         participant_dir = f"sub-{self.participant}"
         func_dir = "func"
-        
+
         # Build filename components
         filename_parts = [f"sub-{self.participant}"]
-        
+
         if self.task:
             filename_parts.append(f"task-{self.task}")
-        
+
+        if label:
+            filename_parts.append(f"label-{label}")
+
         if self.space:
             filename_parts.append(f"space-{self.space}")
-        
+
         filename_parts.append("desc-denoised")
         filename_parts.append("bold.nii.gz")
         
@@ -741,3 +767,79 @@ class BoldContainer(DataContainer):
             raise ValueError("Cannot save BOLD data: data or affine matrix is None")
         
         return output_path
+
+    def resample_to_frequency(self, target_sampling_frequency):
+        """
+        Resample BOLD data to a target sampling frequency.
+
+        This is essential for TR-agnostic cross-correlation analysis. All signals
+        must be resampled to match the delay step (target_sf = 1/delay_step) to
+        ensure each delay increment actually shifts the signal.
+
+        Parameters:
+        -----------
+        target_sampling_frequency : float
+            Target sampling frequency in Hz (e.g., 1.0 Hz for 1-second delay steps)
+
+        Returns:
+        --------
+        None
+            Modifies self.data, self.sampling_frequency, and self.tr in place
+        """
+        import numpy as np
+        from scipy.signal import resample
+
+        if self.data is None:
+            raise ValueError("BOLD data must be loaded before resampling")
+
+        if self.sampling_frequency is None:
+            raise ValueError("BOLD sampling frequency must be set before resampling")
+
+        if target_sampling_frequency <= 0:
+            raise ValueError("Target sampling frequency must be positive")
+
+        # Calculate current duration and target number of samples
+        current_n_timepoints = self.data.shape[-1]
+        current_duration = current_n_timepoints / self.sampling_frequency
+        target_n_timepoints = int(np.round(current_duration * target_sampling_frequency))
+
+        if self.logger:
+            self.logger.info(f"Resampling BOLD data: {self.sampling_frequency:.3f} Hz ({current_n_timepoints} samples) → "
+                           f"{target_sampling_frequency:.3f} Hz ({target_n_timepoints} samples)")
+            self.logger.info(f"Current duration: {current_duration:.2f} seconds, Current TR: {1.0/self.sampling_frequency:.3f}s")
+
+        # DEBUG: Extract a sample voxel timecourse before resampling
+        if self.logger:
+            # Find a non-zero voxel for debugging
+            nonzero_mask = np.any(self.data != 0, axis=-1)
+            if np.any(nonzero_mask):
+                nonzero_coords = np.argwhere(nonzero_mask)
+                debug_coord = tuple(nonzero_coords[len(nonzero_coords)//2])  # Middle voxel
+                before_signal = self.data[debug_coord].copy()
+                self.logger.debug(f"DEBUG: Sample voxel at {debug_coord}")
+                self.logger.debug(f"DEBUG: Before resampling - first 10 timepoints: {before_signal[:10]}")
+                self.logger.debug(f"DEBUG: Before resampling - signal shape: {before_signal.shape}, mean: {np.mean(before_signal):.6f}, std: {np.std(before_signal):.6f}")
+
+        # Resample along the time axis (last dimension)
+        # BOLD data shape: (x, y, z, time)
+        resampled_data = resample(self.data, target_n_timepoints, axis=-1)
+
+        # DEBUG: Check the same voxel after resampling
+        if self.logger and np.any(nonzero_mask):
+            after_signal = resampled_data[debug_coord]
+            self.logger.debug(f"DEBUG: After resampling - first 10 timepoints: {after_signal[:10]}")
+            self.logger.debug(f"DEBUG: After resampling - signal shape: {after_signal.shape}, mean: {np.mean(after_signal):.6f}, std: {np.std(after_signal):.6f}")
+
+            # Show timing of sample points
+            before_times = np.arange(current_n_timepoints) / self.sampling_frequency
+            after_times = np.arange(target_n_timepoints) / target_sampling_frequency
+            self.logger.debug(f"DEBUG: Before timing - first 10 samples: {before_times[:10]}")
+            self.logger.debug(f"DEBUG: After timing - first 10 samples: {after_times[:10]}")
+
+        # Update container
+        self.data = resampled_data
+        self.sampling_frequency = target_sampling_frequency
+        self.tr = 1.0 / target_sampling_frequency
+
+        if self.logger:
+            self.logger.info(f"BOLD data resampled successfully to {target_sampling_frequency} Hz (TR={self.tr:.3f}s)")
