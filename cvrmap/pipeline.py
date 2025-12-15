@@ -150,8 +150,13 @@ class Pipeline:
             self.logger.debug(f"Delays array shape: {delays.shape}, range: [{delays[0]:.1f}, {delays[-1]:.1f}]")
             from .cross_correlation import cross_correlate
             best_correlation, global_delay = cross_correlate(normalized_global_signal, (resampled_shifted_signals, delays), logger=self.logger)
-            self.logger.info(f"Global delay found: {global_delay:.3f}s with correlation: {best_correlation:.3f}")
-            
+            self.logger.info(f"Global delay found: {global_delay:.6f}s with correlation: {best_correlation:.15f}")
+
+            # DEBUG: Create debug plot showing shifted probe signals
+            if self.logger.debug_level >= 1:
+                self.logger.debug("Creating debug plot of shifted probe signals")
+                self._create_shifted_signals_debug_plot(resampled_shifted_signals, delays, participant, self.args.task)
+
             # Create OutputGenerator and save all results
             self.logger.info(f"Saving results for participant: {participant}")
             from .io import OutputGenerator
@@ -658,5 +663,74 @@ IQR: [{stats['cvr_stats']['q25']:.4f}, {stats['cvr_stats']['q75']:.4f}]"""
                 self.logger.debug(f"CVR histogram saved to: {cvr_hist_path}")
 
         self.logger.info(f"Generated histogram statistics for {len(stats['delay_stats'])} delay metrics and {len(stats['cvr_stats'])} CVR metrics")
-        
+
         return stats
+
+    def _create_shifted_signals_debug_plot(self, shifted_signals, delays, participant, task):
+        """
+        Create a debug plot showing multiple shifted probe signals.
+
+        This helps visualize whether time shifts are working correctly by plotting
+        several shifted versions of the probe signal overlaid on the same axes.
+
+        Parameters:
+        -----------
+        shifted_signals : ndarray
+            Array of shifted signals (n_delays, n_timepoints)
+        delays : ndarray
+            Array of time delays in seconds
+        participant : str
+            Participant ID
+        task : str
+            Task name
+        """
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import os
+
+        # Select a subset of delays to plot (to avoid cluttering the plot)
+        # Focus on delays around zero: -5s to +5s with 1s steps
+        delay_indices_to_plot = []
+        delays_to_plot_values = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5]
+
+        for target_delay in delays_to_plot_values:
+            # Find the index of the closest delay
+            idx = np.argmin(np.abs(delays - target_delay))
+            if idx not in delay_indices_to_plot:
+                delay_indices_to_plot.append(idx)
+
+        # Create figure
+        fig, ax = plt.subplots(figsize=(14, 6))
+
+        # Create time axis (in seconds)
+        n_timepoints = shifted_signals.shape[1]
+        # Assuming 1 Hz sampling after resampling (1s TR)
+        time_axis = np.arange(n_timepoints)
+
+        # Plot each selected shifted signal
+        colors = plt.cm.coolwarm(np.linspace(0, 1, len(delay_indices_to_plot)))
+
+        for i, (idx, color) in enumerate(zip(delay_indices_to_plot, colors)):
+            delay_val = delays[idx]
+            signal = shifted_signals[idx, :]
+            ax.plot(time_axis, signal, label=f'Delay = {delay_val:.1f}s',
+                   color=color, alpha=0.7, linewidth=1.5)
+
+        ax.set_xlabel('Time (seconds)', fontsize=12)
+        ax.set_ylabel('Normalized Signal', fontsize=12)
+        ax.set_title(f'Debug: Time-Shifted Probe Signals\n{participant}, task-{task}', fontsize=14)
+        ax.legend(loc='best', fontsize=9, ncol=2)
+        ax.grid(True, alpha=0.3)
+
+        # Save figure
+        label_entity = self._get_roi_label_entity()
+        debug_filename = f"sub-{participant}_task-{task}{label_entity}_desc-debugshifts.png"
+        debug_path = os.path.join(self.args.output_dir, 'cvrmap', f"sub-{participant}", 'figures', debug_filename)
+
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(debug_path), exist_ok=True)
+
+        fig.savefig(debug_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+
+        self.logger.debug(f"Debug shifted signals plot saved to: {debug_path}")

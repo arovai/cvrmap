@@ -307,8 +307,13 @@ class ProbeContainer(DataContainer):
 
     def get_resampled_shifted_signals(self, time_delays_seconds, target_sampling_frequency, target_duration_seconds):
         """
-        Compute time-shifted signals and resample them to a target sampling frequency.
-        
+        Compute time-shifted signals at a target sampling frequency.
+
+        CRITICAL: For TR-agnostic analysis, we must resample BEFORE shifting to avoid
+        quantization of delays to the original TR. This method:
+        1. Resamples the probe signal to target_sampling_frequency
+        2. Computes shifts on the resampled signal
+
         Parameters:
         -----------
         time_delays_seconds : np.ndarray
@@ -317,7 +322,7 @@ class ProbeContainer(DataContainer):
             Target sampling frequency in Hz to resample shifted signals to.
         target_duration_seconds : float
             Target duration in seconds to truncate the resampled signals to.
-            
+
         Returns:
         --------
         tuple
@@ -325,45 +330,66 @@ class ProbeContainer(DataContainer):
             - time_delays_seconds: 1D numpy array of time delays in seconds
         """
         import numpy as np
-        
+        from scipy.signal import resample
+
         if not isinstance(time_delays_seconds, np.ndarray):
             time_delays_seconds = np.array(time_delays_seconds)
-        
+
         if len(time_delays_seconds) == 0:
             raise ValueError("time_delays_seconds array cannot be empty")
-        
+
         if target_duration_seconds <= 0:
             raise ValueError("target_duration_seconds must be positive")
-        
-        # Compute shifted signals with the provided array
-        self._compute_shifted_signals(time_delays_seconds)
-        
-        if self.shifted_signals is None:
-            return None, None
-        
-        # Truncate shifted signals to target duration BEFORE resampling
-        original_n_samples = self.shifted_signals.shape[1]
+
+        # STEP 1: Resample the original probe signal to target sampling frequency
+        original_n_samples = len(self.data)
         original_duration = original_n_samples / self.sampling_frequency
-        
-        if target_duration_seconds < original_duration:
-            # Truncate to target duration
-            target_n_samples_original_sf = int(np.round(target_duration_seconds * self.sampling_frequency))
-            # Make sure we don't exceed the available samples
-            actual_n_samples = min(target_n_samples_original_sf, original_n_samples)
-            truncated_shifted_signals = self.shifted_signals[:, :actual_n_samples]
-            
-            # Temporarily store truncated signals for resampling
-            original_shifted_signals = self.shifted_signals
-            self.shifted_signals = truncated_shifted_signals
-        
-        # Resample the (potentially truncated) shifted signals to target sampling frequency
-        resampled_signals, delays = self._resample_to_target(target_sampling_frequency)
-        
-        # Restore original shifted signals if we truncated them
-        if target_duration_seconds < original_duration:
-            self.shifted_signals = original_shifted_signals
-        
-        return resampled_signals, delays
+
+        # Determine target number of samples
+        target_n_samples = int(np.round(min(original_duration, target_duration_seconds) * target_sampling_frequency))
+
+        # Resample the probe signal
+        resampled_probe_data = resample(self.data, target_n_samples)
+
+        if self.logger:
+            self.logger.debug(f"Resampled probe for shifting: {self.sampling_frequency:.3f} Hz ({original_n_samples} samples) "
+                            f"→ {target_sampling_frequency:.3f} Hz ({target_n_samples} samples)")
+
+        # STEP 2: Compute shifted signals using the RESAMPLED probe data at target sampling frequency
+        n_delays = len(time_delays_seconds)
+        shifted_signals = np.zeros((n_delays, target_n_samples))
+
+        # Get baseline value
+        if self.baseline is not None:
+            probe_baseline = self.baseline
+        else:
+            import peakutils
+            probe_baseline_array = peakutils.baseline(self.data)
+            probe_baseline = np.mean(probe_baseline_array)
+            self.baseline = probe_baseline
+            if self.logger:
+                self.logger.warning("Baseline was not pre-computed. Computing baseline using peakutils as fallback.")
+
+        # Compute shifts on the resampled data
+        for i, delta_t in enumerate(time_delays_seconds):
+            data = probe_baseline * np.ones(target_n_samples)
+
+            # Number of points corresponding to delta_t at TARGET sampling frequency
+            delta_n = int(delta_t * target_sampling_frequency)
+
+            # Shift and copy the resampled data
+            if delta_n == 0:
+                data[:] = resampled_probe_data
+            elif delta_n < 0:
+                # Negative delay: probe signal is delayed relative to data
+                data[:target_n_samples+delta_n] = resampled_probe_data[-delta_n:]
+            elif delta_n > 0:
+                # Positive delay: probe signal is advanced relative to data
+                data[delta_n:] = resampled_probe_data[:target_n_samples-delta_n]
+
+            shifted_signals[i, :] = data
+
+        return shifted_signals, time_delays_seconds
 
     def extrapolate(self, target_duration_seconds, type="baseline"):
         """
