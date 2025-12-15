@@ -594,20 +594,20 @@ class CVRReportGenerator:
             <div class="section-content">
                 <div class="summary-card" style="margin-bottom: 2rem;">
                     <h4>Denoising Pipeline Summary</h4>
-                    <p>The BOLD signal undergoes a comprehensive 4-step denoising process specifically designed for CVR analysis. 
-                    The pipeline intelligently preserves CO₂-related signals while removing motion artifacts, physiological noise, 
-                    and scanner-related artifacts. This approach ensures optimal signal quality for reliable CVR quantification 
+                    <p>The BOLD signal undergoes a comprehensive 4-step denoising process specifically designed for CVR analysis.
+                    The pipeline intelligently preserves {"probe-correlated" if roi_probe_enabled else "CO₂-related"} signals while removing motion artifacts, physiological noise,
+                    and scanner-related artifacts. This approach ensures optimal signal quality for reliable CVR quantification
                     while maintaining the temporal dynamics essential for hemodynamic delay estimation.</p>
                 </div>
                 
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 2rem;">
                     <div style="padding: 1rem; background: #f8f9fa; border-radius: 6px; border-left: 4px solid #28a745;">
                         <strong>1. AROMA Component Refinement</strong><br>
-                        <span style="font-size: 0.9em; color: #666;">Cross-correlation analysis between MELODIC ICs and ETCO₂ signals. Components with correlation > {aroma_threshold} are preserved as signal.</span>
+                        <span style="font-size: 0.9em; color: #666;">Cross-correlation analysis between MELODIC ICs and {"probe" if roi_probe_enabled else "ETCO₂"} signals. Components with correlation > {aroma_threshold} are preserved as signal.</span>
                     </div>
                     <div style="padding: 1rem; background: #f8f9fa; border-radius: 6px; border-left: 4px solid #ffc107;">
                         <strong>2. Non-Aggressive Denoising</strong><br>
-                        <span style="font-size: 0.9em; color: #666;">Selective removal of refined noise components using linear regression while preserving ETCO₂-correlated components.</span>
+                        <span style="font-size: 0.9em; color: #666;">Selective removal of refined noise components using linear regression while preserving {"probe-correlated" if roi_probe_enabled else "ETCO₂-correlated"} components.</span>
                     </div>
                     <div style="padding: 1rem; background: #f8f9fa; border-radius: 6px; border-left: 4px solid #17a2b8;">
                         <strong>3. Temporal Filtering</strong><br>
@@ -641,8 +641,8 @@ class CVRReportGenerator:
                         </div>
                     </div>
                     <p style="margin-top: 1rem; font-size: 0.9em; color: #666;">
-                        AROMA initially classified {ic_stats['original_noise_count']} components as noise. 
-                        After cross-correlation analysis with ETCO₂ signals using threshold {ic_stats['aroma_threshold']}, 
+                        AROMA initially classified {ic_stats['original_noise_count']} components as noise.
+                        After cross-correlation analysis with {"probe" if roi_probe_enabled else "ETCO₂"} signals using threshold {ic_stats['aroma_threshold']},
                         {ic_stats['restored_count']} components were reclassified as signal and preserved.
                     </p>
                 </div>
@@ -652,10 +652,10 @@ class CVRReportGenerator:
                 <div class="figure-container">
                     <img src="figures/{ic_classification_figure}" alt="IC Classification Results" />
                     <div class="figure-caption">
-                        Individual MELODIC independent component timecourses showing their classification status. 
-                        Green traces indicate components reclassified as signal (correlation > {aroma_threshold}), 
-                        while red traces show components retained as noise. Each plot shows the maximum cross-correlation 
-                        with ETCO₂ signals and the corresponding delay.
+                        Individual MELODIC independent component timecourses showing their classification status.
+                        Green traces indicate components reclassified as signal (correlation > {aroma_threshold}),
+                        while red traces show components retained as noise. Each plot shows the maximum cross-correlation
+                        with {"probe" if roi_probe_enabled else "ETCO₂"} signals and the corresponding delay.
                     </div>
                 </div>
                 ''' if ic_classification_exists else ''}
@@ -666,16 +666,16 @@ class CVRReportGenerator:
         <section id="global-delay" class="section">
             <div class="section-header">
                 <h2 class="section-title">Global Signal Analysis</h2>
-                <p class="section-subtitle">BOLD signal correlation with CO₂ and optimal delay estimation</p>
+                <p class="section-subtitle">BOLD signal correlation with {"probe" if roi_probe_enabled else "CO₂"} and optimal delay estimation</p>
             </div>
             <div class="section-content">
-                {"<div class='figure-container'>" + 
+                {"<div class='figure-container'>" +
                 f"<img src='figures/{global_figure}' alt='Global Signal Analysis' />" +
                 "<div class='figure-caption'>" +
-                "This graph shows the normalized global BOLD signal and the optimally shifted ETCO₂ signal with their cross-correlation. " +
-                f"The optimal delay of {global_delay:.3f} seconds represents the hemodynamic lag between CO₂ changes and BOLD signal response. " +
+                f"This graph shows the normalized global BOLD signal and the optimally shifted {'probe' if roi_probe_enabled else 'ETCO₂'} signal with their cross-correlation. " +
+                f"The optimal delay of {global_delay:.3f} seconds represents the hemodynamic lag between {'probe' if roi_probe_enabled else 'CO₂'} changes and BOLD signal response. " +
                 "This global delay is used as the starting point for voxel-wise delay optimization." +
-                "</div></div>" if global_exists else 
+                "</div></div>" if global_exists else
                 "<div class='warning'>Global signal analysis figure not found. Please ensure the analysis completed successfully.</div>"}
             </div>
         </section>
@@ -691,7 +691,7 @@ class CVRReportGenerator:
                 f"<img src='figures/{delay_figure}' alt='Delay Mapping Results' />" +
                 "<div class='figure-caption'>" +
                 "This brain map shows the optimal hemodynamic delay at each voxel, masked by correlation threshold. " +
-                "Delays represent the time lag between CO₂ stimulus and peak BOLD response. " +
+                f"Delays represent the time lag between {'probe' if roi_probe_enabled else 'CO₂ stimulus'} and peak BOLD response. " +
                 "Brain slices are displayed in neurological convention (left on figure = left hemisphere). " +
                 "Warmer colors indicate longer delays, while cooler colors represent shorter delays." +
                 "</div></div>" if delay_exists else 
