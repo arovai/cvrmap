@@ -13,7 +13,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION=$(grep -oP "version=\"\K[^\"]*" "${SCRIPT_DIR}/setup.py" | head -1)
+# Extract version from cvrmap/__init__.py (single source of truth)
+VERSION=$(grep -oP "__version__\s*=\s*\"\K[^\"]*" "${SCRIPT_DIR}/cvrmap/__init__.py")
 CONTAINER_NAME="cvrmap_${VERSION}.sif"
 
 # Parse arguments
