@@ -8,6 +8,16 @@ import matplotlib
 matplotlib.use('Agg')
 
 def main():
+    def is_safe_within_directory(base_dir, target_path):
+        """Return True when target_path resolves within base_dir."""
+        base_real = os.path.realpath(base_dir)
+        target_real = os.path.realpath(target_path)
+        try:
+            return os.path.commonpath([base_real, target_real]) == base_real
+        except ValueError:
+            # Different drives or invalid paths on some platforms.
+            return False
+
     def check_derivatives(derivatives, logger):
         import os
         if not derivatives:
@@ -92,7 +102,10 @@ def main():
     check_derivatives(args.derivatives, logger)
 
     def is_derivative_dataset(path):
-        description_path = os.path.join(path, 'dataset_description.json')
+        base_dir = os.path.abspath(path)
+        description_path = os.path.abspath(os.path.join(base_dir, 'dataset_description.json'))
+        if not is_safe_within_directory(base_dir, description_path):
+            return False
         if not os.path.isfile(description_path):
             return False
         try:
