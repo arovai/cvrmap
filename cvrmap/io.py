@@ -1113,8 +1113,31 @@ class OutputGenerator:
 		title = f'Masked Delay Map - Subject {participant}, Task {task}'
 		fig, gs_inner, ax_cbar, n_rows, n_cols = self._setup_lightbox_figure(title)
 		
-		# Set colormap and normalization
-		cmap = plt.cm.get_cmap('coolwarm')
+		# Set colormap and normalization (robust across matplotlib versions)
+		import matplotlib as mpl
+		import matplotlib.cm as cm
+		import copy as _copy
+		def _safe_get_cmap_local(name):
+			try:
+				cmap_obj = cm.get_cmap(name)
+			except Exception:
+				try:
+					cmap_obj = plt.get_cmap(name)
+				except Exception:
+					try:
+						cmap_obj = mpl.colormaps.get(name)
+					except Exception:
+						cmap_obj = getattr(cm, name, None)
+			try:
+				cmap_obj = cmap_obj
+			except Exception:
+				cmap_obj = cm.get_cmap(name)
+			# Return a mutable copy if possible
+			try:
+				return cmap_obj.copy()
+			except Exception:
+				return _copy.copy(cmap_obj)
+		cmap = _safe_get_cmap_local('coolwarm')
 		vmin, vmax = -5, 5
 		norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
 		
@@ -1141,7 +1164,7 @@ class OutputGenerator:
 			ax.set_title(f'z={slice_idx}', color='white', fontsize=8, pad=2)			
 		
 		# Add custom colorbar
-		cbar = plt.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=ax_cbar)
+		cbar = plt.colorbar(mpl.cm.ScalarMappable(norm=norm, cmap=cmap), cax=ax_cbar)
 		cbar.set_label('Delay (seconds)', rotation=270, labelpad=15, color='white', fontsize=11)
 		cbar.ax.tick_params(colors='white', labelsize=9, width=0.5)
 		cbar.outline.set_edgecolor('white')
@@ -1549,9 +1572,32 @@ class OutputGenerator:
 		probe_type = getattr(probe_container, 'probe_type', 'etco2') if probe_container else 'etco2'
 		is_roi_probe = 'roi_probe' in probe_type  # Handle both 'roi_probe' and 'roi_probe_normalized'
 		
-		# Set colormap and normalization
-		cmap = plt.cm.get_cmap('hot').copy()
-		cmap.set_bad(color='black')  # Set NaN/masked values to black
+		# Set colormap and normalization (robust across matplotlib versions)
+		import matplotlib as mpl
+		import matplotlib.cm as cm
+		import copy as _copy
+		def _safe_get_cmap(name):
+			try:
+				cmap_obj = cm.get_cmap(name)
+			except Exception:
+				try:
+					cmap_obj = plt.get_cmap(name)
+				except Exception:
+					try:
+						cmap_obj = mpl.colormaps.get(name)
+					except Exception:
+						cmap_obj = getattr(cm, name, None)
+			# Make a shallow copy so we can modify it safely
+			try:
+				return cmap_obj.copy()
+			except Exception:
+				return _copy.copy(cmap_obj)
+		cmap = _safe_get_cmap('hot')
+		# If set_bad isn't available on this Colormap, ignore silently
+		try:
+			cmap.set_bad(color='black')  # Set NaN/masked values to black
+		except Exception:
+			pass
 		
 		if is_roi_probe:
 			# For ROI probe mode, adjust vmin/vmax to capture central portion of histogram
@@ -1592,7 +1638,7 @@ class OutputGenerator:
 			ax.set_title(f'z={slice_idx}', color='white', fontsize=8, pad=2)
 		
 		# Add custom colorbar
-		cbar = plt.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=ax_cbar)
+		cbar = plt.colorbar(mpl.cm.ScalarMappable(norm=norm, cmap=cmap), cax=ax_cbar)
 		cbar.set_label(colorbar_label, rotation=270, labelpad=15, color='white', fontsize=11)
 		cbar.ax.tick_params(colors='white', labelsize=9, width=0.5)
 		cbar.outline.set_edgecolor('white')
