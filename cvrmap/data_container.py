@@ -1,3 +1,24 @@
+def get_fmriprep_layout(layout):
+    """Return the fMRIPrep layout for a project layout.
+
+    When the project is indexed from a raw BIDS root, fMRIPrep lives under
+    ``layout.derivatives['fMRIPrep']``. When the input directory itself is an
+    fMRIPrep derivative root, the root layout already contains the needed
+    files, so it is used directly.
+    """
+    if layout is None:
+        raise ValueError("A BIDSLayout instance must be provided.")
+
+    derivatives = getattr(layout, "derivatives", None)
+    if derivatives:
+        try:
+            return derivatives["fMRIPrep"]
+        except (KeyError, TypeError):
+            pass
+
+    return layout
+
+
 class DataContainer:
     """
     Container for holding data for a participant/task/space.
@@ -561,9 +582,11 @@ class BoldContainer(DataContainer):
         import nibabel as nib
         if self.layout is None:
             raise ValueError("A BIDSLayout instance must be provided to BoldContainer at initialization.")
+
+        fmriprep_layout = get_fmriprep_layout(self.layout)
         
         # Find BOLD file in derivatives (fmriprep)
-        bold_files = self.layout.derivatives["fMRIPrep"].get(
+        bold_files = fmriprep_layout.get(
             subject=self.participant,
             task=self.task,
             space=self.space,
@@ -586,7 +609,7 @@ class BoldContainer(DataContainer):
         self.sampling_frequency = 1.0 / self.tr  # Sampling frequency is 1/TR
         
         # Find and load brain mask
-        mask_files = self.layout.derivatives["fMRIPrep"].get(
+        mask_files = fmriprep_layout.get(
             subject=self.participant,
             task=self.task,
             space=self.space,

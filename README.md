@@ -100,6 +100,15 @@ pip install -e .
 cvrmap --version
 ```
 
+### Option 3: build your local images (docker or apptainer)
+
+Docker or Apptainer images can be built using the provided scripts. Check for their help to get guidance:
+
+```
+./build-docker.sh -h    # Show help for Docker build options
+./build-apptainer.sh -h # Show help for Apptainer build options
+```
+
 ## 📊 Data Preparation
 
 ### 1. BIDS Raw Data Structure
@@ -202,6 +211,13 @@ cvrmap /path/to/bids /path/to/output participant \
     --task gas \
     --config custom_config.yaml \
     --derivatives fmriprep=/path/to/fmriprep
+
+# ROI probe from a direct fMRIPrep root (no --derivatives needed)
+cvrmap /path/to/fmriprep /path/to/output participant \
+  --participant-label 01 \
+  --task gas \
+  --roi-probe \
+  --roi-coordinates 0 -52 26
 ```
 
 ### Docker Usage
@@ -321,7 +337,7 @@ CVRmap supports different methods for computing the probe signal baseline, which
 ### Available Methods
 
 #### 1. PeakUtils Method (Default)
-- **Method**: `peakutils` 
+- **Method**: `peakutils`
 - **Description**: Uses signal processing to detect baseline from signal troughs
 - **Best for**: Gas challenge tasks with clear CO₂ manipulations
 - **Advantages**: Robust against signal drift and outliers

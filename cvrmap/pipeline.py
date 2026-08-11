@@ -480,20 +480,28 @@ class Pipeline:
     def _bids_check(self):
         from bids import BIDSLayout
         import sys
+        from .data_container import get_fmriprep_layout
         self.logger.info("Performing BIDS directory check...")
-        layout = BIDSLayout(self.args.bids_dir, derivatives=[self.fmriprep_dir])
+        direct_fmriprep_input = getattr(self.args, 'direct_fmriprep_input', False)
+        if direct_fmriprep_input:
+            layout = BIDSLayout(self.args.bids_dir, validate=False, is_derivative=True)
+        else:
+            layout = BIDSLayout(self.args.bids_dir, derivatives=[self.fmriprep_dir])
         self.layout = layout
 
+        fmriprep_layout = get_fmriprep_layout(layout)
+        self.fmriprep_layout = fmriprep_layout
+
         # Get all subjects in fmriprep derivatives
-        subjects = layout.derivatives["fMRIPrep"].get_subjects()
+        subjects = fmriprep_layout.get_subjects()
         self.subjects = subjects
         self.logger.debug(f"Subjects found in fmriprep derivatives: {subjects}")
 
         self._check_participants(subjects)
-        tasks = layout.get_tasks()
+        tasks = fmriprep_layout.get_tasks()
         self.tasks = tasks
         self._check_tasks(tasks)
-        spaces = layout.get_spaces()
+        spaces = fmriprep_layout.get_spaces()
         self.spaces = spaces
         self._check_spaces(spaces)
         

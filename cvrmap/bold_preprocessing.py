@@ -146,9 +146,12 @@ class BoldPreprocessor:
         Load AROMA noise ICs and MELODIC mixing matrix from fmriprep outputs.
         """
         self.logger.debug("Refining AROMA components...")
+
+        from .data_container import get_fmriprep_layout
+        fmriprep_layout = get_fmriprep_layout(self.layout)
         
         # Load AROMA noise ICs file (comma-separated)
-        aroma_files = self.layout.derivatives["fMRIPrep"].get(
+        aroma_files = fmriprep_layout.get(
             subject=self.participant,
             task=self.args.task,
             suffix='AROMAnoiseICs',
@@ -156,7 +159,7 @@ class BoldPreprocessor:
         )
         
         # Load MELODIC mixing matrix (tab-separated)
-        melodic_files = self.layout.derivatives["fMRIPrep"].get(
+        melodic_files = fmriprep_layout.get(
             subject=self.participant,
             task=self.args.task,
             desc='MELODIC',

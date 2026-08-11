@@ -5,6 +5,7 @@ jupyter/*
 .DS_Store
 cvrmap/utils/__pycache__
 venv/*
+.venv/*
 dist/*
 CVRmap.egg-info/*
 build/*
