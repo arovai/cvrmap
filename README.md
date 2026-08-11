@@ -202,6 +202,13 @@ cvrmap /path/to/bids /path/to/output participant \
     --task gas \
     --config custom_config.yaml \
     --derivatives fmriprep=/path/to/fmriprep
+
+# ROI probe from a direct fMRIPrep root (no --derivatives needed)
+cvrmap /path/to/fmriprep /path/to/output participant \
+  --participant-label 01 \
+  --task gas \
+  --roi-probe \
+  --roi-coordinates 0 -52 26
 ```
 
 ### Docker Usage

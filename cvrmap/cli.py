@@ -1,5 +1,6 @@
 import argparse
 import os
+import json
 from . import __version__
 
 # Set matplotlib backend to non-GUI to avoid tkinter issues in parallel processing
@@ -90,9 +91,22 @@ def main():
     logger.info(f"derivatives: {args.derivatives}")
     check_derivatives(args.derivatives, logger)
 
+    def is_derivative_dataset(path):
+        description_path = os.path.join(path, 'dataset_description.json')
+        if not os.path.isfile(description_path):
+            return False
+        try:
+            with open(description_path, 'r') as description_file:
+                description = json.load(description_file)
+        except (OSError, json.JSONDecodeError):
+            return False
+        dataset_type = str(description.get('DatasetType', '')).lower()
+        return dataset_type == 'derivative'
+
     # Determine fmriprep_dir
     import os
     fmriprep_dir = None
+    args.direct_fmriprep_input = False
     if args.derivatives:
         for item in args.derivatives:
             if item.startswith('fmriprep='):
@@ -103,10 +117,15 @@ def main():
                     logger.warning(f"fmriprep path specified but does not exist: {fmriprep_dir_candidate}")
                 break
     if not fmriprep_dir:
-        fmriprep_dir = os.path.join(args.output_dir, 'fmriprep')
-        if not os.path.isdir(fmriprep_dir):
-            logger.warning(f"fmriprep derivatives not specified and default path does not exist: {fmriprep_dir}")
-            parser.error(f"fmriprep derivatives not found. Please specify with --derivatives fmriprep=/path/to/fmriprep/derivatives or ensure {fmriprep_dir} exists.")
+        if args.roi_probe and is_derivative_dataset(args.bids_dir):
+            fmriprep_dir = args.bids_dir
+            args.direct_fmriprep_input = True
+            logger.info("Using bids_dir as the fMRIPrep derivative root for ROI probe mode")
+        else:
+            fmriprep_dir = os.path.join(args.output_dir, 'fmriprep')
+            if not os.path.isdir(fmriprep_dir):
+                logger.warning(f"fmriprep derivatives not specified and default path does not exist: {fmriprep_dir}")
+                parser.error(f"fmriprep derivatives not found. Please specify with --derivatives fmriprep=/path/to/fmriprep/derivatives or ensure {fmriprep_dir} exists.")
     logger.info(f"fmriprep_dir: {fmriprep_dir}")
 
     from .io import process_config
