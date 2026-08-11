@@ -4,7 +4,7 @@ This document outlines the installation, prerequisites, and test cases for runni
 
 ---
 
-## 📌 Prerequisites
+## Prerequisites
 
 Before running CVRmap, ensure the following:
 
@@ -18,13 +18,13 @@ Before running CVRmap, ensure the following:
 
 ---
 
-## 🧪 Test Cases
+## Test Cases
 
 Below are the commands to run CVRmap in various configurations.
 
 ---
 
-### 1️⃣ **Basic Local Install Test**
+### **Basic Local Install Test**
 Run CVRmap on raw data with fMRIPrep derivatives:
 
 ```bash
@@ -36,7 +36,7 @@ cvrmap rawdata derivatives/cvrmap_4.4.1_test1 participant \
 
 ---
 
-### 2️⃣ **Custom Config File Test**
+### **Custom Config File Test**
 Use a custom configuration file (`code/configs/cvrmap/config.json`):
 
 ```bash
@@ -49,7 +49,7 @@ cvrmap rawdata derivatives/cvrmap_4.4.1_test2 participant \
 
 ---
 
-### 3️⃣ **ROI Probe Test**
+### **ROI Probe Test**
 Test ROI probe functionality with custom coordinates and radius:
 
 ```bash
@@ -64,7 +64,7 @@ cvrmap rawdata derivatives/cvrmap_4.4.1_test3 participant \
 
 ---
 
-### 4️⃣ **Direct fMRIPrep Input with ROI Probe**
+### **Direct fMRIPrep Input with ROI Probe**
 #### **Coordinates Only**
 Run CVRmap directly on fMRIPrep derivatives with ROI probe coordinates:
 
@@ -93,7 +93,7 @@ cvrmap derivatives/fmriprep_21.0.4/ derivatives/cvrmap_4.4.1_test4 participant \
 
 ---
 ---
-### 5️⃣ **ROI Mask Test**
+### **ROI Mask Test - fixed mask**
 Use a custom ROI mask (requires `derivatives/masks/space-MNI_desc-arteries_mask.nii.gz`):
 
 ```bash
@@ -104,9 +104,37 @@ cvrmap derivatives/fmriprep_21.0.4/ derivatives/cvrmap_4.4.1_test5 participant \
   --roi-mask derivatives/masks/space-MNI_desc-arteries_mask.nii.gz
 ```
 
+
 ---
 ---
-### 6️⃣ **ROI Atlas Test**
+### **ROI Mask Test - mask found using pattern matching**
+Use a the ROI mask discovered from a pattern (in this example, a match will be found in the fmriprep folder):
+
+```bash
+cvrmap derivatives/fmriprep_21.0.4/ derivatives/cvrmap_4.4.1_test5 participant \
+  --participant-label 004 \
+  --task gas \
+  --roi-probe \
+  --roi-mask "*desc-brain_mask*"
+```
+
+---
+---
+### **ROI Atlas Test**
+Use an atlas file (requires `/opt/fsl/data/atlases/HarvardOxford/HarvardOxford-cort-maxprob-thr50-2mm.nii.gz`) and specify a region ID:
+
+```bash
+cvrmap derivatives/fmriprep_21.0.4/ derivatives/cvrmap_4.4.1_test6 participant \
+  --participant-label 004 \
+  --task gas \
+  --roi-probe \
+  --roi-atlas /opt/fsl/data/atlases/HarvardOxford/HarvardOxford-cort-maxprob-thr50-2mm.nii.gz \
+  --roi-region-id 43
+```
+
+---
+---
+### **ROI Atlas Test**
 Use an atlas file (requires `/opt/fsl/data/atlases/HarvardOxford/HarvardOxford-cort-maxprob-thr50-2mm.nii.gz`) and specify a region ID:
 
 ```bash
