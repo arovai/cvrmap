@@ -117,3 +117,10 @@ cvrmap derivatives/fmriprep_21.0.4/ derivatives/cvrmap_4.4.1_test6 participant \
   --roi-atlas /opt/fsl/data/atlases/HarvardOxford/HarvardOxford-cort-maxprob-thr50-2mm.nii.gz \
   --roi-region-id 43
 ```
+
+## **Docker build**
+We can also test the docker-build script using:
+
+```bash
+./build-docker.sh --version 4.4.2 --image arovai/cvrmap --latest --push
+```
