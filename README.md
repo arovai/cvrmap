@@ -260,6 +260,9 @@ docker compose run --rm cvrmap \
 | `--roi-mask` | Path to ROI mask file | `--roi-mask /path/to/mask.nii.gz` |
 | `--roi-atlas` | Path to atlas file | `--roi-atlas /path/to/atlas.nii.gz` |
 | `--roi-region-id` | Region ID in atlas | `--roi-region-id 1001` |
+| `--probe-bandpass-filter` | Enable bandpass filtering on ROI probe signal | `--probe-bandpass-filter` |
+| `--probe-lowpass` | Lowpass cutoff frequency in Hz (default: 0.04) | `--probe-lowpass 0.04` |
+| `--probe-highpass` | Highpass cutoff frequency in Hz (default: 0.02) | `--probe-highpass 0.02` |
 
 ## ⚡ Parallel Processing
 
@@ -489,6 +492,60 @@ When using ROI probe mode, outputs include:
 - **ROI choice impacts results** - careful selection required
 - **May be less sensitive** than direct physiological measurements
 - **Region-specific biases** depending on ROI location
+
+### ROI Probe Bandpass Filtering
+
+When using ROI probe mode, you can optionally apply a bandpass filter to the extracted probe timecourse. This can help isolate the physiologically relevant frequency band (typically 0.02-0.04 Hz for respiratory effects on BOLD signal) while removing slow drifts and high-frequency noise.
+
+#### CLI Usage
+
+Enable bandpass filtering with default cutoffs (0.02-0.04 Hz):
+
+```bash
+cvrmap /data/bids /data/output participant \
+    --participant-label 01 \
+    --task gas \
+    --roi-probe \
+    --roi-mask /path/to/roi_mask.nii.gz \
+    --probe-bandpass-filter
+```
+
+Customize frequency cutoffs:
+
+```bash
+cvrmap /data/bids /data/output participant \
+    --participant-label 01 \
+    --task gas \
+    --roi-probe \
+    --roi-mask /path/to/roi_mask.nii.gz \
+    --probe-bandpass-filter \
+    --probe-highpass 0.02 \
+    --probe-lowpass 0.04
+```
+
+#### Configuration File
+
+```yaml
+roi_probe:
+  enabled: true
+  method: mask
+  mask_path: /path/to/roi_mask.nii.gz
+  bandpass_filter:
+    enabled: true
+    highpass_hz: 0.02  # Removes slow drifts below 0.02 Hz
+    lowpass_hz: 0.04   # Removes noise above 0.04 Hz
+```
+
+#### Technical Details
+- Uses a 5th-order Butterworth filter with zero-phase (forward-backward) filtering
+- Applied after ROI probe extraction and before normalization
+- Recommended frequency band: **0.02 to 0.04 Hz** (typical respiratory frequency range)
+- Output files include `_filter-bandpass` entity when filtering is enabled
+
+#### When to Use
+- **Recommended**: When the ROI probe signal contains artifacts or noise
+- **Helpful**: For isolating respiratory-driven BOLD fluctuations
+- **Caution**: May remove physiologically relevant low/high frequency content if cutoffs are too aggressive
 
 ## ⚙️ Configuration
 
