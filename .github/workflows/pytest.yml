@@ -18,9 +18,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
     - name: Set up Python 3.10
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@d09bd5e6005b175076f227b13d9730d56e9dcfcb
       with:
         python-version: "3.10"
     - name: Install dependencies
@@ -38,7 +38,7 @@ jobs:
       run: |
         pytest --cov=cvrmap --cov-report=xml
     - name: Upload coverage reports to Codecov
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@edd20798ab377991aad21abfb1f2d5e093b681e8
       env:
         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
