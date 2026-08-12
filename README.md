@@ -1,3 +1,5 @@
+<div align="center">
+
 # CVRmap - Cerebrovascular Reactivity Mapping Pipeline
 
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue)](https://python.org)
@@ -6,7 +8,14 @@
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![DOI](https://zenodo.org/badge/588501488.svg)](https://zenodo.org/doi/10.5281/zenodo.10400739)
 
+
+[Overview](#overview) | [Installation](#installation) | [Quick Start](#quick-start) | [Configuration](#configuration) | [Outputs](#outputs) | [Troubleshooting](#troubleshooting)
+
 CVRmap is a comprehensive Python CLI application for cerebrovascular reactivity (CVR) mapping using BIDS-compatible physiological and BOLD fMRI data. The pipeline processes CO₂ challenge data to generate maps of cerebrovascular reactivity and hemodynamic delay, providing insights into brain vascular health and function.
+
+</div>
+
+---
 
 ## 🧠 Overview
 
