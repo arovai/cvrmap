@@ -73,6 +73,8 @@ The pipeline generates quantitative maps of:
 
 ### Option 1: Docker Installation (Recommended)
 
+> Docker image tags: use `arovai/cvrmap:latest` for the most recent stable release, or `arovai/cvrmap:nightly` if you want the newest development build from the current `main` branch. The nightly image may include unreleased fixes and changes, while `latest` is better for reproducible workflows.
+
 1. **Pull from Docker Hub**:
 ```bash
 docker pull arovai/cvrmap:latest
