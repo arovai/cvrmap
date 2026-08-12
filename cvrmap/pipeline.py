@@ -77,372 +77,390 @@ class Pipeline:
     def _run_participant_level(self):
         self.logger.info("Running participant level analysis...")
         self._bids_check()
+        failed_participants = []
+
+        for participant in self.args.participant_label:
+            try:
+                self._run_single_participant(participant)
+            except Exception as exc:
+                failed_participants.append(participant)
+                self.logger.exception(f"Participant {participant} failed with error and will be skipped: {exc}")
+
+        if failed_participants:
+            succeeded = len(self.args.participant_label) - len(failed_participants)
+            self.logger.warning(
+                f"Participant-level analysis completed with failures. "
+                f"Succeeded: {succeeded}, Failed: {len(failed_participants)}, "
+                f"Failed participants: {failed_participants}"
+            )
+        else:
+            self.logger.info("Participant-level analysis completed successfully for all participants.")
+
+    def _run_single_participant(self, participant):
         from .physio_preprocessing import PhysioPreprocessor
         from .bold_preprocessing import BoldPreprocessor
-        for participant in self.args.participant_label:
-            
-            # Create and load BOLD container first (needed for both probe types)
-            self.logger.info(f"Loading BOLD data for participant: {participant}")
-            from .data_container import BoldContainer
-            bold_container = BoldContainer(
+
+        # Create and load BOLD container first (needed for both probe types)
+        self.logger.info(f"Loading BOLD data for participant: {participant}")
+        from .data_container import BoldContainer
+        bold_container = BoldContainer(
+            participant=participant,
+            task=self.args.task,
+            space=self.args.space,
+            layout=self.layout,
+            logger=self.logger
+        )
+        bold_container.load()
+        bold_duration_seconds = bold_container.data.shape[-1] / bold_container.sampling_frequency
+        self.logger.info(f"BOLD data loaded with duration: {bold_duration_seconds:.2f}s")
+
+        # Determine probe type and extract probe signal
+        roi_probe_enabled = self.config.get('roi_probe', {}).get('enabled', False)
+
+        if roi_probe_enabled:
+            # STAGE 1: Extract ROI probe from RAW BOLD data (before denoising)
+            # This probe will be used for AROMA component refinement during BOLD preprocessing
+            self.logger.info(f"Using ROI-based probe for participant: {participant}")
+            self.logger.info("STAGE 1: Extracting ROI probe from raw BOLD data for AROMA refinement")
+            from .roi_probe import create_roi_probe_from_config
+            etco2_container = create_roi_probe_from_config(
+                bold_container,  # Contains raw BOLD data from fMRIPrep
+                self.config,
+                self.logger,
                 participant=participant,
                 task=self.args.task,
                 space=self.args.space,
-                layout=self.layout,
-                logger=self.logger
+                fmriprep_dir=self.fmriprep_dir
             )
-            bold_container.load()
-            bold_duration_seconds = bold_container.data.shape[-1] / bold_container.sampling_frequency
-            self.logger.info(f"BOLD data loaded with duration: {bold_duration_seconds:.2f}s")
-            
-            # Determine probe type and extract probe signal
-            roi_probe_enabled = self.config.get('roi_probe', {}).get('enabled', False)
-            
-            if roi_probe_enabled:
-                # STAGE 1: Extract ROI probe from RAW BOLD data (before denoising)
-                # This probe will be used for AROMA component refinement during BOLD preprocessing
-                self.logger.info(f"Using ROI-based probe for participant: {participant}")
-                self.logger.info("STAGE 1: Extracting ROI probe from raw BOLD data for AROMA refinement")
-                from .roi_probe import create_roi_probe_from_config
-                etco2_container = create_roi_probe_from_config(
-                    bold_container,  # Contains raw BOLD data from fMRIPrep
-                    self.config,
-                    self.logger,
-                    participant=participant,
-                    task=self.args.task,
-                    space=self.args.space,
-                    fmriprep_dir=self.fmriprep_dir
-                )
-                self.logger.info(f"STAGE 1 complete: ROI probe extracted from raw data for denoising")
-                
-                # No physio_preprocessor in ROI mode
-                physio_preprocessor = None
-            else:
-                self.logger.info(f"Using physiological probe for participant: {participant}")
-                physio_preprocessor = PhysioPreprocessor(self.args, self.logger, self.layout, participant, self.config)
-                physio_preprocessor.run()
-                etco2_container = physio_preprocessor.get_upper_envelope()
-                self.logger.info(f"Physio preprocessing completed for participant: {participant}")
-                       
-            
-            # Build shifted probe using config parameters
-            # IMPORTANT: For TR-agnostic analysis, signals must be resampled to match delay_step
-            # This ensures delay increments actually shift the signal at discrete sampling points
-            max_delay_seconds = self.config.get('cross_correlation', {}).get('delay_max')
-            delay_step_seconds = self.config.get('cross_correlation', {}).get('delay_step', 1.0)
+            self.logger.info(f"STAGE 1 complete: ROI probe extracted from raw data for denoising")
 
-            # Target sampling frequency must match delay step for meaningful cross-correlation
-            # If delay_step = 1.0s, then sampling frequency = 1 Hz (one sample per second)
-            target_sampling_frequency = 1.0 / delay_step_seconds
-            target_duration_seconds = bold_container.data.shape[-1] / bold_container.sampling_frequency  # BOLD duration
+            # No physio_preprocessor in ROI mode
+            physio_preprocessor = None
+        else:
+            self.logger.info(f"Using physiological probe for participant: {participant}")
+            physio_preprocessor = PhysioPreprocessor(self.args, self.logger, self.layout, participant, self.config)
+            physio_preprocessor.run()
+            etco2_container = physio_preprocessor.get_upper_envelope()
+            self.logger.info(f"Physio preprocessing completed for participant: {participant}")
 
-            self.logger.info(f"Delay step: {delay_step_seconds}s → Target sampling frequency: {target_sampling_frequency} Hz")
-            self.logger.info(f"BOLD TR: {1.0/bold_container.sampling_frequency:.2f}s → BOLD sampling frequency: {bold_container.sampling_frequency:.3f} Hz")
+        # Build shifted probe using config parameters
+        # IMPORTANT: For TR-agnostic analysis, signals must be resampled to match delay_step
+        # This ensures delay increments actually shift the signal at discrete sampling points
+        max_delay_seconds = self.config.get('cross_correlation', {}).get('delay_max')
+        delay_step_seconds = self.config.get('cross_correlation', {}).get('delay_step', 1.0)
 
-            # Build time delays array from -max_delay_seconds to +max_delay_seconds with delay_step increments
-            import numpy as np
-            time_delays_seconds = np.arange(-max_delay_seconds, max_delay_seconds + delay_step_seconds, delay_step_seconds)
-            
-            # Create BOLD preprocessor and run it with the original time delays
-            self.logger.info(f"Starting BOLD preprocessing for participant: {participant}")
-            bold_preprocessor = BoldPreprocessor(self.args, self.logger, self.layout, participant, self.config, etco2_container, time_delays_seconds)
-            bold_container = bold_preprocessor.run(bold_container)
-            
-            # Get IC classification stats if available
-            ic_classification_stats = getattr(bold_preprocessor, 'ic_classification_stats', None)
+        # Target sampling frequency must match delay step for meaningful cross-correlation
+        # If delay_step = 1.0s, then sampling frequency = 1 Hz (one sample per second)
+        target_sampling_frequency = 1.0 / delay_step_seconds
+        target_duration_seconds = bold_container.data.shape[-1] / bold_container.sampling_frequency  # BOLD duration
 
-            # STAGE 2: For ROI probe mode, re-extract probe from DENOISED data
-            # The Stage 1 probe (from raw data) was used for AROMA component refinement
-            # Now we re-extract from denoised data to ensure consistency with global signal
-            # This guarantees that probe and global signal are computed from identical data
-            if roi_probe_enabled:
-                self.logger.info("STAGE 2: Re-extracting ROI probe from denoised BOLD data for global delay estimation")
-                etco2_container = create_roi_probe_from_config(
-                    bold_container,  # Now contains denoised data after 4-step preprocessing
-                    self.config,
-                    self.logger,
-                    participant=participant,
-                    task=self.args.task,
-                    space=self.args.space,
-                    fmriprep_dir=self.fmriprep_dir
-                )
-                self.logger.info("STAGE 2 complete: ROI probe extracted from denoised data (for comparison with global signal)")
+        self.logger.info(f"Delay step: {delay_step_seconds}s → Target sampling frequency: {target_sampling_frequency} Hz")
+        self.logger.info(f"BOLD TR: {1.0/bold_container.sampling_frequency:.2f}s → BOLD sampling frequency: {bold_container.sampling_frequency:.3f} Hz")
 
-            # Resample BOLD data to target sampling frequency for TR-agnostic analysis
-            # This ensures voxel-by-voxel cross-correlation works regardless of original TR
-            self.logger.info(f"Resampling denoised BOLD data to target frequency: {target_sampling_frequency} Hz for TR-agnostic analysis")
-            bold_container.resample_to_frequency(target_sampling_frequency)
+        # Build time delays array from -max_delay_seconds to +max_delay_seconds with delay_step increments
+        import numpy as np
+        time_delays_seconds = np.arange(-max_delay_seconds, max_delay_seconds + delay_step_seconds, delay_step_seconds)
 
-            # Recalculate target duration after resampling
-            target_duration_seconds = bold_container.data.shape[-1] / bold_container.sampling_frequency
+        # Create BOLD preprocessor and run it with the original time delays
+        self.logger.info(f"Starting BOLD preprocessing for participant: {participant}")
+        bold_preprocessor = BoldPreprocessor(self.args, self.logger, self.layout, participant, self.config, etco2_container, time_delays_seconds)
+        bold_container = bold_preprocessor.run(bold_container)
 
-            # Compute global BOLD signal on the resampled denoised data
-            self.logger.info("Computing global BOLD signal across all voxels on resampled denoised data")
-            global_signal_container = bold_container.get_global_signal()
-            self.logger.info(f"Global signal container created with {len(global_signal_container.data)} timepoints")
+        # Get IC classification stats if available
+        ic_classification_stats = getattr(bold_preprocessor, 'ic_classification_stats', None)
 
-            # Normalize global signal container
-            self.logger.info("Normalizing global BOLD signal")
-            normalized_global_signal, _ = global_signal_container.get_normalized_signals()
-            self.logger.info("Global BOLD signal normalized")
-
-            self.logger.info(f"Building resampled and normalized shifted probe with delays {time_delays_seconds[0]:.1f}s to {time_delays_seconds[-1]:.1f}s, target_sf={target_sampling_frequency}Hz, target_duration={target_duration_seconds}s")
-            resampled_shifted_signals, delays = etco2_container.get_resampled_normalized_shifted_signals(
-                time_delays_seconds=time_delays_seconds,
-                target_sampling_frequency=target_sampling_frequency,
-                target_duration_seconds=target_duration_seconds
-            )
-            self.logger.info(f"Generated {resampled_shifted_signals.shape[0]} resampled and normalized shifted ETCO2 signals")
-            
-            # Compute cross-correlation between normalized global signal and resampled normalized probes
-            self.logger.info("Computing cross-correlation between global BOLD signal and ETCO2 probes")
-            self.logger.debug(f"Delays array shape: {delays.shape}, range: [{delays[0]:.1f}, {delays[-1]:.1f}]")
-            from .cross_correlation import cross_correlate
-            best_correlation, global_delay = cross_correlate(normalized_global_signal, (resampled_shifted_signals, delays), logger=self.logger)
-            self.logger.info(f"Global delay found: {global_delay:.3f}s with correlation: {best_correlation:.3f}")
-
-            # Create OutputGenerator and save all results
-            self.logger.info(f"Saving results for participant: {participant}")
-            from .io import OutputGenerator
-            output_generator = OutputGenerator(self.args.output_dir, self.logger, self.config)
-            
-            # Save ETCO2 data
-            output_generator.save_etco2_data(etco2_container, participant, self.args.task)
-            
-            # Create physio figure - handle both physio and ROI modes
-            if physio_preprocessor is not None:
-                # Traditional physio mode: show original physio data and extracted ETCO2
-                physio_container = physio_preprocessor.get_physio_container()
-                output_generator.create_physio_figure(physio_container, etco2_container, participant, self.args.task)
-            else:
-                # ROI mode: create a specialized figure showing ROI probe
-                output_generator.create_roi_probe_figure(etco2_container, participant, self.args.task, self.config)
-                # Also create ROI visualization showing the ROI on mean BOLD
-                output_generator.create_roi_visualization_figure(etco2_container, bold_container, participant, self.args.task, self.config)
-            
-            # Save global signal (unnormalized)
-            output_generator.save_global_signal(global_signal_container, participant, self.args.task, self.args.space)
-            
-            # Get the shifted ETCO2 signal that corresponds to the global delay
-            # Find the index of the delay closest to global_delay
-            delay_idx = np.argmin(np.abs(delays - global_delay))
-            shifted_etco2_for_global = resampled_shifted_signals[delay_idx, :]
-            
-            # Get the unshifted ETCO2 signal (delay=0)
-            unshifted_delay_idx = np.argmin(np.abs(delays - 0.0))
-            unshifted_etco2_for_global = resampled_shifted_signals[unshifted_delay_idx, :]
-            
-            # Create a temporary container for the selected shifted signal
-            from .data_container import ProbeContainer
-            shifted_etco2_container = ProbeContainer(
-                participant=participant,
-                task=self.args.task,
-                data=shifted_etco2_for_global,
-                sampling_frequency=target_sampling_frequency,
-                units="normalized",
-                logger=self.logger
-            )
-            # Copy probe_type from original container
-            if hasattr(etco2_container, 'probe_type'):
-                shifted_etco2_container.probe_type = etco2_container.probe_type
-            
-            # Create a temporary container for the unshifted signal
-            unshifted_etco2_container = ProbeContainer(
-                participant=participant,
-                task=self.args.task,
-                data=unshifted_etco2_for_global,
-                sampling_frequency=target_sampling_frequency,
-                units="normalized",
-                logger=self.logger
-            )
-            # Copy probe_type from original container
-            if hasattr(etco2_container, 'probe_type'):
-                unshifted_etco2_container.probe_type = etco2_container.probe_type
-            
-            # Create global signal correlation figure
-            output_generator.create_global_signal_figure(
-                normalized_global_signal, 
-                shifted_etco2_container, 
-                global_delay, 
-                participant, 
-                self.args.task, 
-                self.args.space,
-                unshifted_etco2_container
-            )
-            
-            # Additional processing steps for delay analysis
-            self.logger.info("Starting additional delay processing steps...")
-            
-            # Step 1: Normalize the denoised BOLD data
-            self.logger.info("Normalizing denoised BOLD data")
-            normalized_bold_container, _ = bold_container.get_normalized_signals()
-            self.logger.info("Denoised BOLD data normalized")
-            
-            # Step 2: Compute relative time delay array by shifting original array by global_delay
-            self.logger.info(f"Computing relative time delays by shifting original delays by global delay: {global_delay:.3f}s")
-            relative_time_delays_seconds = time_delays_seconds + global_delay
-            self.logger.info(f"Relative time delays range: {relative_time_delays_seconds[0]:.1f}s to {relative_time_delays_seconds[-1]:.1f}s")
-            
-            # Step 3: Build shifted, normalized probes for the relative time delays
-            self.logger.info("Building shifted and normalized probes for relative time delays")
-            relative_shifted_signals, relative_delays = etco2_container.get_resampled_normalized_shifted_signals(
-                time_delays_seconds=relative_time_delays_seconds,
-                target_sampling_frequency=target_sampling_frequency,
-                target_duration_seconds=target_duration_seconds
-            )
-            self.logger.info(f"Generated {relative_shifted_signals.shape[0]} relative shifted and normalized ETCO2 signals")
-            
-            # Step 4: Define delay processor with normalized BOLD data and normalized relative probes
-            self.logger.info("Initializing delay processor")
-            from .delay_processor import DelayProcessor
-            delay_processor = DelayProcessor(
-                normalized_bold_data=normalized_bold_container,
-                normalized_shifted_probes=(relative_shifted_signals, relative_delays),
-                global_delay=global_delay,
-                logger=self.logger,
-                config=self.config
-            )
-            self.logger.info("Delay processor initialized successfully")
-            
-            # Run delay processing analysis
-            self.logger.info("Running delay processing analysis")
-            delay_results = delay_processor.run()
-            self.logger.info("Delay processing analysis completed")
-            
-            # Save delay maps using OutputGenerator
-            self.logger.info("Saving delay maps and correlation maps")
-            delay_paths = output_generator.save_delay_maps(
-                delay_results=delay_results,
-                normalized_bold_container=normalized_bold_container,
+        # STAGE 2: For ROI probe mode, re-extract probe from DENOISED data
+        # The Stage 1 probe (from raw data) was used for AROMA component refinement
+        # Now we re-extract from denoised data to ensure consistency with global signal
+        # This guarantees that probe and global signal are computed from identical data
+        if roi_probe_enabled:
+            self.logger.info("STAGE 2: Re-extracting ROI probe from denoised BOLD data for global delay estimation")
+            etco2_container = create_roi_probe_from_config(
+                bold_container,  # Now contains denoised data after 4-step preprocessing
+                self.config,
+                self.logger,
                 participant=participant,
                 task=self.args.task,
                 space=self.args.space,
-                global_delay=global_delay,
-                probe_container=etco2_container
+                fmriprep_dir=self.fmriprep_dir
             )
-            self.logger.info("Delay maps and correlation maps saved successfully")
-            
-            # Step 5: CVR Processing
-            self.logger.info("Initializing CVR processor")
-            from .cvr_processor import CVRProcessor
-            
-            # Get non-normalized resampled shifted signals for CVR processing using relative delays
-            self.logger.info("Building resampled shifted ETCO2 signals (non-normalized) for CVR processing using relative delays")
-            non_normalized_shifted_signals, cvr_delays = etco2_container.get_resampled_shifted_signals(
-                time_delays_seconds=relative_time_delays_seconds,
-                target_sampling_frequency=target_sampling_frequency,
-                target_duration_seconds=target_duration_seconds
-            )
-            self.logger.info(f"Generated {non_normalized_shifted_signals.shape[0]} non-normalized resampled shifted ETCO2 signals for CVR")
-            
-            cvr_processor = CVRProcessor(
-                denoised_bold_data=bold_container,  # Use denoised BOLD (NOT normalized)
-                resampled_shifted_probes=(non_normalized_shifted_signals, cvr_delays),  # Use non-normalized resampled probes
-                delay_maps=delay_results['delay_maps'],
-                probe_baseline=etco2_container.baseline,  # Pass the baseline value from ETCO2 container
-                global_delay=global_delay,  # Pass the global delay
-                logger=self.logger,
-                config=self.config
-            )
-            self.logger.info("CVR processor initialized successfully")
-            
-            # Run CVR processing analysis
-            self.logger.info("Running CVR processing analysis")
-            cvr_results = cvr_processor.run()
-            self.logger.info("CVR processing analysis completed")
-            
-            # Save CVR maps using OutputGenerator
-            self.logger.info("Saving CVR maps")
-            cvr_paths = output_generator.save_cvr_maps(
-                cvr_results=cvr_results,
-                bold_container=bold_container,
-                participant=participant,
-                task=self.args.task,
-                space=self.args.space,
-                probe_container=etco2_container
-            )
-            self.logger.info("CVR maps saved successfully")
-            
-            # Save coefficient maps (b0 and b1) using OutputGenerator
-            self.logger.info("Saving coefficient maps")
-            coeff_paths = output_generator.save_coefficient_maps(
-                cvr_results=cvr_results,
-                bold_container=bold_container,
-                participant=participant,
-                task=self.args.task,
-                space=self.args.space,
-                probe_container=etco2_container
-            )
-            self.logger.info("Coefficient maps saved successfully")
-            
-            # Save 4D regressor map using OutputGenerator
-            self.logger.info("Saving 4D regressor map")
-            regressor_4d_path = output_generator.save_regressor_4d_map(
-                delay_results=delay_results,
-                resampled_shifted_probes=(non_normalized_shifted_signals, cvr_delays),
-                bold_container=bold_container,
-                participant=participant,
-                task=self.args.task,
-                space=self.args.space,
-                probe_container=etco2_container
-            )
-            self.logger.info("4D regressor map saved successfully")
+            self.logger.info("STAGE 2 complete: ROI probe extracted from denoised data (for comparison with global signal)")
 
-            # Generate histogram statistics and plots
-            self.logger.info("Generating histogram statistics")
-            histogram_stats = self._generate_histogram_statistics(
-                delay_results=delay_results,
-                cvr_results=cvr_results,
-                bold_container=bold_container,
-                participant=participant,
-                probe_container=etco2_container
-            )
-            self.logger.info("Histogram statistics generated successfully")
+        # Resample BOLD data to target sampling frequency for TR-agnostic analysis
+        # This ensures voxel-by-voxel cross-correlation works regardless of original TR
+        self.logger.info(f"Resampling denoised BOLD data to target frequency: {target_sampling_frequency} Hz for TR-agnostic analysis")
+        bold_container.resample_to_frequency(target_sampling_frequency)
 
-            # Generate HTML report
-            self.logger.info("Generating HTML report")
-            from .report import CVRReportGenerator
-            report_generator = CVRReportGenerator(
-                participant_id=participant,
-                task=self.args.task,
-                output_dir=self.args.output_dir,
-                logger=self.logger,
-                config=self.config
-            )
-            
-            # Prepare report data
-            physio_results = {'etco2_container': etco2_container}
-            if physio_preprocessor is not None:
-                physio_container = physio_preprocessor.get_physio_container()
-                physio_results['physio_container'] = physio_container
-            
-            report_data = {
-                'global_delay': global_delay,
-                'physio_results': physio_results,
-                'bold_results': {
-                    'bold_container': bold_container,
-                    'normalized_bold_container': normalized_bold_container,
-                    'global_signal_container': global_signal_container,
-                    'ic_classification_stats': ic_classification_stats
-                },
-                'delay_results': delay_results,
-                'cvr_results': cvr_results,
-                'processing_info': {
-                    'target_sampling_frequency': target_sampling_frequency,
-                    'target_duration_seconds': target_duration_seconds,
-                    'time_delays_seconds': time_delays_seconds,
-                    'relative_time_delays_seconds': relative_time_delays_seconds,
-                    'best_correlation': best_correlation,
-                    'max_delay_seconds': max_delay_seconds
-                },
-                'histogram_stats': histogram_stats,
-                'command_line': self.command_line,
-                'config_snapshot': self.config_snapshot
-            }
-            
-            report_generator.generate_report(**report_data)
+        # Recalculate target duration after resampling
+        target_duration_seconds = bold_container.data.shape[-1] / bold_container.sampling_frequency
 
-            self.logger.info(f"Results saved for participant: {participant}")
+        # Compute global BOLD signal on the resampled denoised data
+        self.logger.info("Computing global BOLD signal across all voxels on resampled denoised data")
+        global_signal_container = bold_container.get_global_signal()
+        self.logger.info(f"Global signal container created with {len(global_signal_container.data)} timepoints")
+
+        # Normalize global signal container
+        self.logger.info("Normalizing global BOLD signal")
+        normalized_global_signal, _ = global_signal_container.get_normalized_signals()
+        self.logger.info("Global BOLD signal normalized")
+
+        self.logger.info(f"Building resampled and normalized shifted probe with delays {time_delays_seconds[0]:.1f}s to {time_delays_seconds[-1]:.1f}s, target_sf={target_sampling_frequency}Hz, target_duration={target_duration_seconds}s")
+        resampled_shifted_signals, delays = etco2_container.get_resampled_normalized_shifted_signals(
+            time_delays_seconds=time_delays_seconds,
+            target_sampling_frequency=target_sampling_frequency,
+            target_duration_seconds=target_duration_seconds
+        )
+        self.logger.info(f"Generated {resampled_shifted_signals.shape[0]} resampled and normalized shifted ETCO2 signals")
+
+        # Compute cross-correlation between normalized global signal and resampled normalized probes
+        self.logger.info("Computing cross-correlation between global BOLD signal and ETCO2 probes")
+        self.logger.debug(f"Delays array shape: {delays.shape}, range: [{delays[0]:.1f}, {delays[-1]:.1f}]")
+        from .cross_correlation import cross_correlate
+        best_correlation, global_delay = cross_correlate(normalized_global_signal, (resampled_shifted_signals, delays), logger=self.logger)
+        self.logger.info(f"Global delay found: {global_delay:.3f}s with correlation: {best_correlation:.3f}")
+
+        # Create OutputGenerator and save all results
+        self.logger.info(f"Saving results for participant: {participant}")
+        from .io import OutputGenerator
+        output_generator = OutputGenerator(self.args.output_dir, self.logger, self.config)
+
+        # Save ETCO2 data
+        output_generator.save_etco2_data(etco2_container, participant, self.args.task)
+
+        # Create physio figure - handle both physio and ROI modes
+        if physio_preprocessor is not None:
+            # Traditional physio mode: show original physio data and extracted ETCO2
+            physio_container = physio_preprocessor.get_physio_container()
+            output_generator.create_physio_figure(physio_container, etco2_container, participant, self.args.task)
+        else:
+            # ROI mode: create a specialized figure showing ROI probe
+            output_generator.create_roi_probe_figure(etco2_container, participant, self.args.task, self.config)
+            # Also create ROI visualization showing the ROI on mean BOLD
+            output_generator.create_roi_visualization_figure(etco2_container, bold_container, participant, self.args.task, self.config)
+
+        # Save global signal (unnormalized)
+        output_generator.save_global_signal(global_signal_container, participant, self.args.task, self.args.space)
+
+        # Get the shifted ETCO2 signal that corresponds to the global delay
+        # Find the index of the delay closest to global_delay
+        delay_idx = np.argmin(np.abs(delays - global_delay))
+        shifted_etco2_for_global = resampled_shifted_signals[delay_idx, :]
+
+        # Get the unshifted ETCO2 signal (delay=0)
+        unshifted_delay_idx = np.argmin(np.abs(delays - 0.0))
+        unshifted_etco2_for_global = resampled_shifted_signals[unshifted_delay_idx, :]
+
+        # Create a temporary container for the selected shifted signal
+        from .data_container import ProbeContainer
+        shifted_etco2_container = ProbeContainer(
+            participant=participant,
+            task=self.args.task,
+            data=shifted_etco2_for_global,
+            sampling_frequency=target_sampling_frequency,
+            units="normalized",
+            logger=self.logger
+        )
+        # Copy probe_type from original container
+        if hasattr(etco2_container, 'probe_type'):
+            shifted_etco2_container.probe_type = etco2_container.probe_type
+
+        # Create a temporary container for the unshifted signal
+        unshifted_etco2_container = ProbeContainer(
+            participant=participant,
+            task=self.args.task,
+            data=unshifted_etco2_for_global,
+            sampling_frequency=target_sampling_frequency,
+            units="normalized",
+            logger=self.logger
+        )
+        # Copy probe_type from original container
+        if hasattr(etco2_container, 'probe_type'):
+            unshifted_etco2_container.probe_type = etco2_container.probe_type
+
+        # Create global signal correlation figure
+        output_generator.create_global_signal_figure(
+            normalized_global_signal,
+            shifted_etco2_container,
+            global_delay,
+            participant,
+            self.args.task,
+            self.args.space,
+            unshifted_etco2_container
+        )
+
+        # Additional processing steps for delay analysis
+        self.logger.info("Starting additional delay processing steps...")
+
+        # Step 1: Normalize the denoised BOLD data
+        self.logger.info("Normalizing denoised BOLD data")
+        normalized_bold_container, _ = bold_container.get_normalized_signals()
+        self.logger.info("Denoised BOLD data normalized")
+
+        # Step 2: Compute relative time delay array by shifting original array by global_delay
+        self.logger.info(f"Computing relative time delays by shifting original delays by global delay: {global_delay:.3f}s")
+        relative_time_delays_seconds = time_delays_seconds + global_delay
+        self.logger.info(f"Relative time delays range: {relative_time_delays_seconds[0]:.1f}s to {relative_time_delays_seconds[-1]:.1f}s")
+
+        # Step 3: Build shifted, normalized probes for the relative time delays
+        self.logger.info("Building shifted and normalized probes for relative time delays")
+        relative_shifted_signals, relative_delays = etco2_container.get_resampled_normalized_shifted_signals(
+            time_delays_seconds=relative_time_delays_seconds,
+            target_sampling_frequency=target_sampling_frequency,
+            target_duration_seconds=target_duration_seconds
+        )
+        self.logger.info(f"Generated {relative_shifted_signals.shape[0]} relative shifted and normalized ETCO2 signals")
+
+        # Step 4: Define delay processor with normalized BOLD data and normalized relative probes
+        self.logger.info("Initializing delay processor")
+        from .delay_processor import DelayProcessor
+        delay_processor = DelayProcessor(
+            normalized_bold_data=normalized_bold_container,
+            normalized_shifted_probes=(relative_shifted_signals, relative_delays),
+            global_delay=global_delay,
+            logger=self.logger,
+            config=self.config
+        )
+        self.logger.info("Delay processor initialized successfully")
+
+        # Run delay processing analysis
+        self.logger.info("Running delay processing analysis")
+        delay_results = delay_processor.run()
+        self.logger.info("Delay processing analysis completed")
+
+        # Save delay maps using OutputGenerator
+        self.logger.info("Saving delay maps and correlation maps")
+        output_generator.save_delay_maps(
+            delay_results=delay_results,
+            normalized_bold_container=normalized_bold_container,
+            participant=participant,
+            task=self.args.task,
+            space=self.args.space,
+            global_delay=global_delay,
+            probe_container=etco2_container
+        )
+        self.logger.info("Delay maps and correlation maps saved successfully")
+
+        # Step 5: CVR Processing
+        self.logger.info("Initializing CVR processor")
+        from .cvr_processor import CVRProcessor
+
+        # Get non-normalized resampled shifted signals for CVR processing using relative delays
+        self.logger.info("Building resampled shifted ETCO2 signals (non-normalized) for CVR processing using relative delays")
+        non_normalized_shifted_signals, cvr_delays = etco2_container.get_resampled_shifted_signals(
+            time_delays_seconds=relative_time_delays_seconds,
+            target_sampling_frequency=target_sampling_frequency,
+            target_duration_seconds=target_duration_seconds
+        )
+        self.logger.info(f"Generated {non_normalized_shifted_signals.shape[0]} non-normalized resampled shifted ETCO2 signals for CVR")
+
+        cvr_processor = CVRProcessor(
+            denoised_bold_data=bold_container,  # Use denoised BOLD (NOT normalized)
+            resampled_shifted_probes=(non_normalized_shifted_signals, cvr_delays),  # Use non-normalized resampled probes
+            delay_maps=delay_results['delay_maps'],
+            probe_baseline=etco2_container.baseline,  # Pass the baseline value from ETCO2 container
+            global_delay=global_delay,  # Pass the global delay
+            logger=self.logger,
+            config=self.config
+        )
+        self.logger.info("CVR processor initialized successfully")
+
+        # Run CVR processing analysis
+        self.logger.info("Running CVR processing analysis")
+        cvr_results = cvr_processor.run()
+        self.logger.info("CVR processing analysis completed")
+
+        # Save CVR maps using OutputGenerator
+        self.logger.info("Saving CVR maps")
+        output_generator.save_cvr_maps(
+            cvr_results=cvr_results,
+            bold_container=bold_container,
+            participant=participant,
+            task=self.args.task,
+            space=self.args.space,
+            probe_container=etco2_container
+        )
+        self.logger.info("CVR maps saved successfully")
+
+        # Save coefficient maps (b0 and b1) using OutputGenerator
+        self.logger.info("Saving coefficient maps")
+        output_generator.save_coefficient_maps(
+            cvr_results=cvr_results,
+            bold_container=bold_container,
+            participant=participant,
+            task=self.args.task,
+            space=self.args.space,
+            probe_container=etco2_container
+        )
+        self.logger.info("Coefficient maps saved successfully")
+
+        # Save 4D regressor map using OutputGenerator
+        self.logger.info("Saving 4D regressor map")
+        output_generator.save_regressor_4d_map(
+            delay_results=delay_results,
+            resampled_shifted_probes=(non_normalized_shifted_signals, cvr_delays),
+            bold_container=bold_container,
+            participant=participant,
+            task=self.args.task,
+            space=self.args.space,
+            probe_container=etco2_container
+        )
+        self.logger.info("4D regressor map saved successfully")
+
+        # Generate histogram statistics and plots
+        self.logger.info("Generating histogram statistics")
+        histogram_stats = self._generate_histogram_statistics(
+            delay_results=delay_results,
+            cvr_results=cvr_results,
+            bold_container=bold_container,
+            participant=participant,
+            probe_container=etco2_container
+        )
+        self.logger.info("Histogram statistics generated successfully")
+
+        # Generate HTML report
+        self.logger.info("Generating HTML report")
+        from .report import CVRReportGenerator
+        report_generator = CVRReportGenerator(
+            participant_id=participant,
+            task=self.args.task,
+            output_dir=self.args.output_dir,
+            logger=self.logger,
+            config=self.config
+        )
+
+        # Prepare report data
+        physio_results = {'etco2_container': etco2_container}
+        if physio_preprocessor is not None:
+            physio_container = physio_preprocessor.get_physio_container()
+            physio_results['physio_container'] = physio_container
+
+        report_data = {
+            'global_delay': global_delay,
+            'physio_results': physio_results,
+            'bold_results': {
+                'bold_container': bold_container,
+                'normalized_bold_container': normalized_bold_container,
+                'global_signal_container': global_signal_container,
+                'ic_classification_stats': ic_classification_stats
+            },
+            'delay_results': delay_results,
+            'cvr_results': cvr_results,
+            'processing_info': {
+                'target_sampling_frequency': target_sampling_frequency,
+                'target_duration_seconds': target_duration_seconds,
+                'time_delays_seconds': time_delays_seconds,
+                'relative_time_delays_seconds': relative_time_delays_seconds,
+                'best_correlation': best_correlation,
+                'max_delay_seconds': max_delay_seconds
+            },
+            'histogram_stats': histogram_stats,
+            'command_line': self.command_line,
+            'config_snapshot': self.config_snapshot
+        }
+
+        report_generator.generate_report(**report_data)
+
+        self.logger.info(f"Results saved for participant: {participant}")
 
     def _check_physio(self):
         """
@@ -497,10 +515,12 @@ class Pipeline:
         self.subjects = subjects
         self.logger.debug(f"Subjects found in fmriprep derivatives: {subjects}")
 
-        self._check_participants(subjects)
         tasks = fmriprep_layout.get_tasks()
         self.tasks = tasks
         self._check_tasks(tasks)
+
+        self._check_participants(subjects)
+
         spaces = fmriprep_layout.get_spaces()
         self.spaces = spaces
         self._check_spaces(spaces)
@@ -514,20 +534,50 @@ class Pipeline:
 
     def _check_participants(self, subjects):
         import sys
+
+        task_filtered_subjects = set(subjects)
+        if self.args.task:
+            task_filtered_subjects = {
+                subj for subj in subjects
+                if self.fmriprep_layout.get(
+                    subject=subj,
+                    task=self.args.task,
+                    suffix="bold",
+                    extension=[".nii", ".nii.gz"],
+                    return_type="file"
+                )
+            }
+            missing_for_task = sorted(set(subjects) - task_filtered_subjects)
+            if missing_for_task:
+                self.logger.warning(
+                    f"Participants without task '{self.args.task}' BOLD data will be skipped: {missing_for_task}"
+                )
+
         if not self.args.participant_label:
-            self.logger.info("No participant_label specified, using all subjects from fmriprep derivatives.")
-            self.args.participant_label = subjects
+            self.logger.info("No participant_label specified, auto-discovering participants from fmriprep derivatives.")
+            self.args.participant_label = sorted(task_filtered_subjects)
+            if self.args.task:
+                self.logger.info(
+                    f"Auto-discovery restricted to participants with task '{self.args.task}': {self.args.participant_label}"
+                )
         else:
             valid_labels = []
             for label in self.args.participant_label:
-                if label in subjects:
-                    valid_labels.append(label)
-                else:
+                if label not in subjects:
                     self.logger.warning(f"Participant label '{label}' not found in fmriprep derivatives. It will be skipped.")
-            if not valid_labels:
-                self.logger.warning("No valid participant labels remain after filtering. Exiting.")
-                sys.exit(1)
+                    continue
+                if label not in task_filtered_subjects:
+                    self.logger.warning(f"Participant label '{label}' has no BOLD data for task '{self.args.task}'. It will be skipped.")
+                    continue
+                valid_labels.append(label)
             self.args.participant_label = valid_labels
+
+        if not self.args.participant_label:
+            if self.args.task:
+                self.logger.warning(f"No participants with task '{self.args.task}' remain after filtering. Exiting.")
+            else:
+                self.logger.warning("No valid participant labels remain after filtering. Exiting.")
+            sys.exit(1)
 
     def _check_tasks(self, tasks):
         import sys
