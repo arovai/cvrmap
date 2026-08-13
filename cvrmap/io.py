@@ -1509,8 +1509,15 @@ class OutputGenerator:
 		if self.logger:
 			self.logger.info(f"Processing {len(brain_voxels):,} brain voxels in parallel for 4D regressor map")
 		
+		# Show joblib progress only when debug logging is enabled.
+		parallel_verbose = 0
+		if self.logger:
+			logger_obj = getattr(self.logger, "_logger", self.logger)
+			if hasattr(logger_obj, "isEnabledFor") and logger_obj.isEnabledFor(10):
+				parallel_verbose = 1
+
 		# Process voxels in parallel
-		results = Parallel(n_jobs=n_jobs, verbose=1 if self.logger else 0)(
+		results = Parallel(n_jobs=n_jobs, verbose=parallel_verbose)(
 			delayed(_process_regressor_voxel)(voxel_coord, delay_maps, time_delays_seconds, shifted_signals) 
 			for voxel_coord in brain_voxels
 		)
@@ -1686,8 +1693,15 @@ class OutputGenerator:
 		# Split brain voxels into chunks
 		voxel_chunks = [brain_voxels[i:i + chunk_size] for i in range(0, len(brain_voxels), chunk_size)]
 		
+		# Show joblib progress only when debug logging is enabled.
+		parallel_verbose = 0
+		if self.logger:
+			logger_obj = getattr(self.logger, "_logger", self.logger)
+			if hasattr(logger_obj, "isEnabledFor") and logger_obj.isEnabledFor(10):
+				parallel_verbose = 1
+
 		# Process chunks in parallel using multiprocessing backend for true parallelization
-		chunk_results = Parallel(n_jobs=n_jobs, backend='multiprocessing', verbose=1 if self.logger else 0)(
+		chunk_results = Parallel(n_jobs=n_jobs, backend='multiprocessing', verbose=parallel_verbose)(
 			delayed(_process_regressor_voxel_chunk)(chunk, delay_maps, time_delays_seconds, shifted_signals) 
 			for chunk in voxel_chunks
 		)
