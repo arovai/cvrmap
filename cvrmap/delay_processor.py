@@ -355,8 +355,15 @@ class DelayProcessor:
         # Split brain voxels into chunks
         voxel_chunks = [brain_voxels[i:i + chunk_size] for i in range(0, len(brain_voxels), chunk_size)]
         
+        # Show joblib progress only when debug logging is enabled.
+        parallel_verbose = 0
+        if self.logger:
+            logger_obj = getattr(self.logger, "_logger", self.logger)
+            if hasattr(logger_obj, "isEnabledFor") and logger_obj.isEnabledFor(10):
+                parallel_verbose = 1
+
         # Process chunks in parallel using multiprocessing backend for true parallelization
-        chunk_results = Parallel(n_jobs=n_jobs, backend='multiprocessing', verbose=1 if self.logger else 0)(
+        chunk_results = Parallel(n_jobs=n_jobs, backend='multiprocessing', verbose=parallel_verbose)(
             delayed(_process_delay_voxel_chunk)(chunk, bold_data, shifted_signals, time_delays_seconds, global_delay, n_delays) 
             for chunk in voxel_chunks
         )
